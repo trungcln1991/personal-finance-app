@@ -38,8 +38,8 @@ export async function requireToken() {
     document.body.innerHTML = `
       <div class="setup-screen">
         <h1>Sổ Thu Chi</h1>
-        <p>Chưa cấu hình kết nối tới kho dữ liệu GitHub.</p>
-        <a class="btn btn-primary" href="settings.html">Vào Cài đặt để nhập token</a>
+        <p>Chưa đăng nhập trên thiết bị này.</p>
+        <a class="btn btn-primary" href="settings.html">Vào Cài đặt để đăng nhập</a>
       </div>`;
     return false;
   }

@@ -12,25 +12,22 @@
   <h1>Cài đặt</h1>
 
   <details class="settings-section" open>
-    <summary>Kết nối GitHub</summary>
+    <summary>Đăng nhập</summary>
     <div class="section-body">
       <div class="field">
-        <label for="f-token">Fine-grained Personal Access Token</label>
-        <input type="password" id="f-token" placeholder="github_pat_..." />
+        <label for="f-password">Mật khẩu app</label>
+        <input type="password" id="f-password" placeholder="Nhập mật khẩu" autocomplete="current-password" />
       </div>
       <div style="display:flex;gap:8px;margin-top:10px;">
-        <button id="save-token" class="btn btn-primary">Lưu token</button>
+        <button id="login-btn" class="btn btn-primary">Đăng nhập</button>
         <button id="test-token" class="btn btn-secondary">Kiểm tra kết nối</button>
-        <button id="clear-token" class="btn btn-danger">Xoá token</button>
+        <button id="clear-token" class="btn btn-danger">Đăng xuất</button>
       </div>
       <p id="token-status" class="muted" style="margin-top:8px;"></p>
       <div class="help-box" style="margin-top:12px;">
-        <strong>Cách tạo token:</strong>
-        GitHub → Settings → Developer settings → Personal access tokens → Fine-grained tokens →
-        Generate new token. Repository access: chọn <em>Only select repositories</em> →
-        <code>personal-finance-data</code>. Permissions: <em>Contents</em> →
-        <em>Read and write</em>. Không cấp thêm quyền nào khác. Token chỉ lưu trong trình duyệt
-        của bạn (localStorage), không gửi đi đâu khác ngoài GitHub API.
+        Mật khẩu chỉ dùng để đổi lấy phiên đăng nhập trên thiết bị này — app không lưu token
+        GitHub thật, token thật nằm ở server trung gian (Cloudflare Worker). Mỗi thiết bị chỉ
+        cần đăng nhập 1 lần, phiên có hiệu lực 90 ngày.
       </div>
     </div>
   </details>

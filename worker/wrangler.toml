@@ -1,0 +1,8 @@
+name = "personal-finance-proxy"
+main = "src/index.js"
+compatibility_date = "2024-11-01"
+
+# Secrets (không khai báo giá trị ở đây — set qua `wrangler secret put`):
+#   GITHUB_TOKEN   fine-grained PAT có quyền Contents Read/Write trên repo personal-finance-data
+#   APP_PASSWORD   mật khẩu ngắn tự đặt để đăng nhập từ app
+#   SESSION_SECRET chuỗi ngẫu nhiên dùng ký session token (không cần nhớ)

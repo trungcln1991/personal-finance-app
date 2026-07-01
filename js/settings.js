@@ -1,23 +1,26 @@
 import { renderNav, showError, clearError } from './nav.js';
-import { getToken, saveToken, clearToken, testToken } from './github-api.js';
+import { getToken, login, clearToken, testToken, hasToken } from './github-api.js';
 import { loadCategories, saveCategories, loadBudget, saveBudget, genId } from './store.js';
 
 renderNav('settings');
 
-const tokenInput = document.getElementById('f-token');
+const passwordInput = document.getElementById('f-password');
 const tokenStatus = document.getElementById('token-status');
 
-tokenInput.value = getToken();
-
-document.getElementById('save-token').addEventListener('click', () => {
-  saveToken(tokenInput.value);
-  tokenStatus.textContent = 'Đã lưu token vào trình duyệt này.';
+document.getElementById('login-btn').addEventListener('click', async () => {
+  tokenStatus.textContent = 'Đang đăng nhập…';
+  try {
+    await login(passwordInput.value);
+    passwordInput.value = '';
+    tokenStatus.textContent = 'Đăng nhập thành công. Trình duyệt này sẽ tự nhớ đăng nhập.';
+  } catch (err) {
+    tokenStatus.textContent = err.message;
+  }
 });
 
 document.getElementById('clear-token').addEventListener('click', () => {
   clearToken();
-  tokenInput.value = '';
-  tokenStatus.textContent = 'Đã xoá token.';
+  tokenStatus.textContent = 'Đã đăng xuất khỏi trình duyệt này.';
 });
 
 document.getElementById('test-token').addEventListener('click', async () => {
