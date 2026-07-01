@@ -13,6 +13,22 @@ export function formatVnd(amount) {
   return new Intl.NumberFormat('vi-VN', { style: 'currency', currency: 'VND', maximumFractionDigits: 0 }).format(amount || 0);
 }
 
+export function formatNumber(n) {
+  return new Intl.NumberFormat('vi-VN').format(n || 0);
+}
+
+export function parseAmountInput(value) {
+  return Number(String(value).replace(/\D/g, '')) || 0;
+}
+
+// Gắn định dạng phân cách nghìn (17.000.000) tự động khi gõ vào ô số tiền.
+export function attachAmountInput(el) {
+  el.addEventListener('input', () => {
+    const digits = el.value.replace(/\D/g, '');
+    el.value = digits ? formatNumber(Number(digits)) : '';
+  });
+}
+
 export async function loadCategories() {
   const { data, sha } = await getJsonFile('categories.json');
   return { categories: data || { income: [], expense: [], paymentMethods: [], priorities: [] }, sha };

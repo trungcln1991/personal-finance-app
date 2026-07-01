@@ -1,5 +1,5 @@
 import { renderNav, requireToken, showError } from './nav.js';
-import { loadCategories, loadTransactions, addTransaction, updateTransaction, deleteTransaction, genId } from './store.js';
+import { loadCategories, loadTransactions, addTransaction, updateTransaction, deleteTransaction, genId, formatNumber, parseAmountInput, attachAmountInput } from './store.js';
 
 renderNav('add');
 
@@ -20,6 +20,8 @@ const priorityField = document.getElementById('priority-field');
 const submitBtn = document.getElementById('submit-btn');
 const btnIncome = document.getElementById('type-income');
 const btnExpense = document.getElementById('type-expense');
+
+attachAmountInput(amountEl);
 
 function setType(type) {
   currentType = type;
@@ -55,7 +57,7 @@ async function init() {
     setType(tx.type);
     dateEl.value = tx.date;
     populateCategorySelect(tx.category);
-    amountEl.value = tx.amount;
+    amountEl.value = formatNumber(tx.amount);
     priorityEl.value = tx.priority || 'nice';
     paymentEl.value = tx.paymentMethod || '';
     noteEl.value = tx.note || '';
@@ -75,7 +77,7 @@ document.getElementById('tx-form').addEventListener('submit', async (e) => {
       date: dateEl.value,
       type: currentType,
       category: categoryEl.value,
-      amount: Number(amountEl.value),
+      amount: parseAmountInput(amountEl.value),
       note: noteEl.value.trim(),
       paymentMethod: paymentEl.value || null,
     };

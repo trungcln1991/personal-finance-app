@@ -1,6 +1,6 @@
 import { renderNav, showError, clearError } from './nav.js';
 import { getToken, login, clearToken, testToken, hasToken } from './github-api.js';
-import { loadCategories, saveCategories, loadBudget, saveBudget, genId } from './store.js';
+import { loadCategories, saveCategories, loadBudget, saveBudget, genId, formatNumber, parseAmountInput, attachAmountInput } from './store.js';
 
 renderNav('settings');
 
@@ -124,10 +124,11 @@ function renderBudgetForm() {
       return `
         <div class="field" data-cat="${c.id}">
           <label>${c.name}</label>
-          <input type="number" class="budget-amount" min="0" step="10000" value="${cfg.monthlyAmount}" />
+          <input type="text" inputmode="numeric" class="budget-amount" value="${formatNumber(cfg.monthlyAmount)}" />
         </div>`;
     })
     .join('');
+  el.querySelectorAll('.budget-amount').forEach(attachAmountInput);
 }
 
 document.getElementById('save-budget').addEventListener('click', async () => {
@@ -136,7 +137,7 @@ document.getElementById('save-budget').addEventListener('click', async () => {
   const yearBudget = {};
   document.querySelectorAll('#budget-form .field').forEach((field) => {
     const catId = field.dataset.cat;
-    const amount = Number(field.querySelector('.budget-amount').value) || 0;
+    const amount = parseAmountInput(field.querySelector('.budget-amount').value);
     const cat = categories.expense.find((c) => c.id === catId);
     yearBudget[catId] = { name: cat?.name || catId, monthlyAmount: amount, alertThreshold: 0.9 };
   });
