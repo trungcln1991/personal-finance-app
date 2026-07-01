@@ -252,4 +252,46 @@ form { display: flex; flex-direction: column; gap: 12px; }
   color: var(--muted);
   line-height: 1.5;
 }
+
+/* ---- Tablet: nới khung nội dung ---- */
+@media (min-width: 768px) {
+  main { max-width: 720px; padding: 24px; }
+  .summary-grid .value { font-size: 1.2rem; }
+}
+
+/* ---- Laptop/Desktop: sidebar trái thay cho thanh dưới, khung rộng hơn ---- */
+@media (min-width: 1024px) {
+  body { padding-bottom: 0; padding-left: 220px; }
+
+  main { max-width: 900px; padding: 32px; }
+
+  .bottom-nav {
+    top: 0;
+    bottom: 0;
+    left: 0;
+    right: auto;
+    width: 220px;
+    height: 100vh;
+    flex-direction: column;
+    align-items: stretch;
+    justify-content: flex-start;
+    gap: 4px;
+    padding: 28px 0;
+    border-top: none;
+    border-right: 1px solid var(--surface-2);
+  }
+
+  .nav-item {
+    text-align: left;
+    padding: 12px 28px;
+    font-size: 0.95rem;
+  }
+
+  .fab {
+    right: 40px;
+    bottom: 40px;
+  }
+
+  .setup-screen { height: 100vh; }
+}
 .help-box a { color: var(--accent); }
