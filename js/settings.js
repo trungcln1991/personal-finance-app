@@ -1,6 +1,6 @@
 import { renderNav, showError, clearError } from './nav.js';
 import { getToken, login, clearToken, testToken, hasToken } from './github-api.js';
-import { loadCategories, saveCategories, loadBudget, saveBudget, genId, formatNumber, parseAmountInput, attachAmountInput } from './store.js';
+import { loadCategories, saveCategories, loadBudget, saveBudget, genId, formatNumber, parseAmountInput, attachAmountInput, categoryIcon } from './store.js';
 
 renderNav('settings');
 
@@ -44,12 +44,12 @@ function slugify(s) {
     .toLowerCase();
 }
 
-function renderCategoryList(containerId, list, onRemove) {
+function renderCategoryList(containerId, list, onRemove, getIcon) {
   const el = document.getElementById(containerId);
   el.innerHTML = list
     .map(
       (c) => `<div class="category-manage-row" data-id="${c.id}">
-        <span>${c.name}</span>
+        <span>${getIcon ? getIcon(c.id) + ' ' : ''}${c.name}</span>
         <button class="btn btn-danger remove-btn">Xoá</button>
       </div>`
     )
@@ -60,8 +60,8 @@ function renderCategoryList(containerId, list, onRemove) {
 }
 
 function renderAllCategoryLists() {
-  renderCategoryList('expense-cat-list', categories.expense, removeExpenseCategory);
-  renderCategoryList('income-cat-list', categories.income, removeIncomeCategory);
+  renderCategoryList('expense-cat-list', categories.expense, removeExpenseCategory, categoryIcon);
+  renderCategoryList('income-cat-list', categories.income, removeIncomeCategory, categoryIcon);
   renderCategoryList('payment-list', categories.paymentMethods, removePaymentMethod);
 }
 

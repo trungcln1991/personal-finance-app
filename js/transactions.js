@@ -1,5 +1,5 @@
 import { renderNav, requireToken, showError } from './nav.js';
-import { loadCategories, loadTransactions, deleteTransaction, formatVnd, currentMonthKey, categoryName } from './store.js';
+import { loadCategories, loadTransactions, deleteTransaction, formatVnd, currentMonthKey, categoryName, categoryIcon } from './store.js';
 
 renderNav('transactions');
 
@@ -35,12 +35,16 @@ async function render() {
     listEl.innerHTML = sorted
       .map((t) => {
         const name = categoryName(categories, t.type, t.category);
+        const icon = t.type === 'income' ? '💰' : categoryIcon(t.category);
         const sign = t.type === 'income' ? '+' : '-';
         return `
           <div class="tx-row" data-id="${t.id}">
             <div class="tx-main">
-              <span class="tx-cat">${name}</span>
-              <span class="tx-note">${t.date}${t.note ? ' · ' + t.note : ''}</span>
+              <span class="tx-icon">${icon}</span>
+              <div class="tx-text">
+                <span class="tx-cat">${name}</span>
+                <span class="tx-note">${t.date}${t.note ? ' · ' + t.note : ''}</span>
+              </div>
             </div>
             <div style="display:flex;align-items:center;">
               <span class="tx-amount ${t.type}">${sign}${formatVnd(t.amount)}</span>

@@ -8,15 +8,17 @@ if ('serviceWorker' in navigator) {
 
 export function renderNav(active) {
   const items = [
-    { href: 'index.html', label: 'Tổng quan', id: 'dashboard' },
-    { href: 'transactions.html', label: 'Giao dịch', id: 'transactions' },
-    { href: 'settings.html', label: 'Cài đặt', id: 'settings' },
+    { href: 'index.html', label: 'Tổng quan', id: 'dashboard', icon: '📊' },
+    { href: 'transactions.html', label: 'Giao dịch', id: 'transactions', icon: '📒' },
+    { href: 'settings.html', label: 'Cài đặt', id: 'settings', icon: '⚙️' },
   ];
   const nav = document.createElement('nav');
   nav.className = 'bottom-nav';
   nav.innerHTML = items
     .map(
-      (it) => `<a href="${it.href}" class="nav-item ${it.id === active ? 'active' : ''}">${it.label}</a>`
+      (it) => `<a href="${it.href}" class="nav-item ${it.id === active ? 'active' : ''}">
+        <span class="nav-icon">${it.icon}</span><span>${it.label}</span>
+      </a>`
     )
     .join('');
   document.body.appendChild(nav);

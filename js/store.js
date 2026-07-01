@@ -100,3 +100,24 @@ export function paymentMethodName(categories, id) {
 export function priorityName(categories, id) {
   return categories.priorities.find((p) => p.id === id)?.name || id;
 }
+
+const CATEGORY_ICONS = {
+  'dien-nuoc-internet': '💡',
+  'con-di-hoc': '🎒',
+  'ta-sua-cua-con': '🍼',
+  'tien-xang-bao-tri-xe': '⛽',
+  'tien-cho': '🛒',
+  'tien-an-sang-chieu': '🍜',
+  'tien-ich-dt-dich-vu': '📱',
+  'do-dung-gia-dinh': '🏠',
+  'cho-bieu-tang': '🎁',
+  'quy-suc-khoe': '🏥',
+  'quy-dau-tu-dai-han': '📈',
+  'quy-du-phong': '🛡️',
+  luong: '💰',
+  'thu-ngoai': '➕',
+};
+
+export function categoryIcon(id) {
+  return CATEGORY_ICONS[id] || '💵';
+}

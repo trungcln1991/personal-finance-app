@@ -1,5 +1,5 @@
 import { renderNav, requireToken, showError } from './nav.js';
-import { loadCategories, loadTransactions, addTransaction, updateTransaction, deleteTransaction, genId, formatNumber, parseAmountInput, attachAmountInput } from './store.js';
+import { loadCategories, loadTransactions, addTransaction, updateTransaction, deleteTransaction, genId, formatNumber, parseAmountInput, attachAmountInput, categoryIcon } from './store.js';
 
 renderNav('add');
 
@@ -33,7 +33,7 @@ function setType(type) {
 
 function populateCategorySelect(selectedId) {
   const list = currentType === 'income' ? categories.income : categories.expense;
-  categoryEl.innerHTML = list.map((c) => `<option value="${c.id}">${c.name}</option>`).join('');
+  categoryEl.innerHTML = list.map((c) => `<option value="${c.id}">${categoryIcon(c.id)} ${c.name}</option>`).join('');
   if (selectedId) categoryEl.value = selectedId;
 }
 

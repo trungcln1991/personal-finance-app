@@ -1,5 +1,5 @@
 import { renderNav, requireToken, showError } from './nav.js';
-import { loadCategories, loadBudget, loadTransactions, formatVnd, currentMonthKey, categoryName } from './store.js';
+import { loadCategories, loadBudget, loadTransactions, formatVnd, currentMonthKey, categoryName, categoryIcon } from './store.js';
 
 renderNav('dashboard');
 
@@ -101,7 +101,7 @@ async function render(monthKey) {
           return `
             <div class="budget-row">
               <div class="row-top">
-                <span>${cfg.name || catId}</span>
+                <span>${categoryIcon(catId)} ${cfg.name || catId}</span>
                 <span>${formatVnd(spent)} / ${formatVnd(cfg.monthlyAmount)}</span>
               </div>
               <div class="progress-bar"><div class="progress-fill ${cls}" style="width:${Math.min(pct, 1) * 100}%"></div></div>
