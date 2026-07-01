@@ -11,51 +11,64 @@
 <main>
   <h1>Cài đặt</h1>
 
-  <h2>Kết nối GitHub</h2>
-  <div class="card">
-    <div class="field">
-      <label for="f-token">Fine-grained Personal Access Token</label>
-      <input type="password" id="f-token" placeholder="github_pat_..." />
+  <details class="settings-section" open>
+    <summary>Kết nối GitHub</summary>
+    <div class="section-body">
+      <div class="field">
+        <label for="f-token">Fine-grained Personal Access Token</label>
+        <input type="password" id="f-token" placeholder="github_pat_..." />
+      </div>
+      <div style="display:flex;gap:8px;margin-top:10px;">
+        <button id="save-token" class="btn btn-primary">Lưu token</button>
+        <button id="test-token" class="btn btn-secondary">Kiểm tra kết nối</button>
+        <button id="clear-token" class="btn btn-danger">Xoá token</button>
+      </div>
+      <p id="token-status" class="muted" style="margin-top:8px;"></p>
+      <div class="help-box" style="margin-top:12px;">
+        <strong>Cách tạo token:</strong>
+        GitHub → Settings → Developer settings → Personal access tokens → Fine-grained tokens →
+        Generate new token. Repository access: chọn <em>Only select repositories</em> →
+        <code>personal-finance-data</code>. Permissions: <em>Contents</em> →
+        <em>Read and write</em>. Không cấp thêm quyền nào khác. Token chỉ lưu trong trình duyệt
+        của bạn (localStorage), không gửi đi đâu khác ngoài GitHub API.
+      </div>
     </div>
-    <div style="display:flex;gap:8px;margin-top:10px;">
-      <button id="save-token" class="btn btn-primary">Lưu token</button>
-      <button id="test-token" class="btn btn-secondary">Kiểm tra kết nối</button>
-      <button id="clear-token" class="btn btn-danger">Xoá token</button>
+  </details>
+
+  <details class="settings-section">
+    <summary>Danh mục chi</summary>
+    <div class="section-body">
+      <div id="expense-cat-list"></div>
+      <div class="field" style="margin-top:12px;"><input type="text" id="new-expense-cat" placeholder="Tên danh mục chi mới" /></div>
+      <button id="add-expense-cat" class="btn btn-secondary btn-block">Thêm danh mục chi</button>
     </div>
-    <p id="token-status" class="muted" style="margin-top:8px;"></p>
-  </div>
-  <div class="help-box">
-    <strong>Cách tạo token:</strong>
-    GitHub → Settings → Developer settings → Personal access tokens → Fine-grained tokens → Generate new token.
-    Repository access: chọn <em>Only select repositories</em> → <code>personal-finance-data</code>.
-    Permissions: <em>Contents</em> → <em>Read and write</em>. Không cấp thêm quyền nào khác.
-    Token chỉ lưu trong trình duyệt của bạn (localStorage), không gửi đi đâu khác ngoài GitHub API.
-  </div>
+  </details>
 
-  <h2>Danh mục chi</h2>
-  <div class="card" id="expense-cat-list"></div>
-  <div class="card">
-    <div class="field"><input type="text" id="new-expense-cat" placeholder="Tên danh mục chi mới" /></div>
-    <button id="add-expense-cat" class="btn btn-secondary btn-block">Thêm danh mục chi</button>
-  </div>
+  <details class="settings-section">
+    <summary>Danh mục thu</summary>
+    <div class="section-body">
+      <div id="income-cat-list"></div>
+      <div class="field" style="margin-top:12px;"><input type="text" id="new-income-cat" placeholder="Tên danh mục thu mới" /></div>
+      <button id="add-income-cat" class="btn btn-secondary btn-block">Thêm danh mục thu</button>
+    </div>
+  </details>
 
-  <h2>Danh mục thu</h2>
-  <div class="card" id="income-cat-list"></div>
-  <div class="card">
-    <div class="field"><input type="text" id="new-income-cat" placeholder="Tên danh mục thu mới" /></div>
-    <button id="add-income-cat" class="btn btn-secondary btn-block">Thêm danh mục thu</button>
-  </div>
+  <details class="settings-section">
+    <summary>Phương thức thanh toán</summary>
+    <div class="section-body">
+      <div id="payment-list"></div>
+      <div class="field" style="margin-top:12px;"><input type="text" id="new-payment" placeholder="Phương thức mới" /></div>
+      <button id="add-payment" class="btn btn-secondary btn-block">Thêm phương thức</button>
+    </div>
+  </details>
 
-  <h2>Phương thức thanh toán</h2>
-  <div class="card" id="payment-list"></div>
-  <div class="card">
-    <div class="field"><input type="text" id="new-payment" placeholder="Phương thức mới" /></div>
-    <button id="add-payment" class="btn btn-secondary btn-block">Thêm phương thức</button>
-  </div>
-
-  <h2>Ngân sách năm <span id="budget-year"></span></h2>
-  <div class="card" id="budget-form"></div>
-  <button id="save-budget" class="btn btn-primary btn-block">Lưu ngân sách</button>
+  <details class="settings-section">
+    <summary>Ngân sách năm <span id="budget-year"></span></summary>
+    <div class="section-body">
+      <div id="budget-form"></div>
+      <button id="save-budget" class="btn btn-primary btn-block" style="margin-top:12px;">Lưu ngân sách</button>
+    </div>
+  </details>
 </main>
 <script type="module" src="js/settings.js"></script>
 </body>

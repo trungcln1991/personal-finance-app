@@ -9,7 +9,6 @@ if ('serviceWorker' in navigator) {
 export function renderNav(active) {
   const items = [
     { href: 'index.html', label: 'Tổng quan', id: 'dashboard' },
-    { href: 'add.html', label: 'Thêm', id: 'add' },
     { href: 'transactions.html', label: 'Giao dịch', id: 'transactions' },
     { href: 'settings.html', label: 'Cài đặt', id: 'settings' },
   ];
@@ -21,6 +20,16 @@ export function renderNav(active) {
     )
     .join('');
   document.body.appendChild(nav);
+
+  // Nút thêm giao dịch nổi, luôn hiện trừ khi đang ở chính trang Thêm.
+  if (active !== 'add') {
+    const fab = document.createElement('a');
+    fab.href = 'add.html';
+    fab.className = 'fab';
+    fab.setAttribute('aria-label', 'Thêm giao dịch');
+    fab.textContent = '+';
+    document.body.appendChild(fab);
+  }
 }
 
 // Chặn dùng app nếu chưa cấu hình token, điều hướng về Cài đặt.
