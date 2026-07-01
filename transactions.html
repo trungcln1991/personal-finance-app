@@ -1,0 +1,25 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Giao dịch — Sổ Thu Chi</title>
+<link rel="manifest" href="manifest.json" />
+<link rel="stylesheet" href="css/style.css" />
+</head>
+<body>
+<main>
+  <h1>Giao dịch</h1>
+
+  <div class="month-switcher">
+    <button id="prev-month">‹</button>
+    <strong id="month-label">—</strong>
+    <button id="next-month">›</button>
+  </div>
+
+  <div id="loading" class="muted">Đang tải…</div>
+  <div class="tx-list" id="tx-list"></div>
+</main>
+<script type="module" src="js/transactions.js"></script>
+</body>
+</html>

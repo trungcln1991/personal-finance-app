@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Tổng quan — Sổ Thu Chi</title>
+<link rel="manifest" href="manifest.json" />
+<link rel="stylesheet" href="css/style.css" />
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
+</head>
+<body>
+<main>
+  <h1>Sổ Thu Chi</h1>
+
+  <div class="month-switcher">
+    <button id="prev-month">‹</button>
+    <strong id="month-label">—</strong>
+    <button id="next-month">›</button>
+  </div>
+
+  <div id="loading" class="muted">Đang tải dữ liệu…</div>
+
+  <div id="content" style="display:none">
+    <div class="summary-grid">
+      <div class="card">
+        <div class="label">Thu</div>
+        <div class="value income-value" id="total-income">0</div>
+      </div>
+      <div class="card">
+        <div class="label">Chi</div>
+        <div class="value expense-value" id="total-expense">0</div>
+      </div>
+      <div class="card">
+        <div class="label">Số dư</div>
+        <div class="value" id="total-balance">0</div>
+      </div>
+    </div>
+
+    <h2>Chi theo danh mục</h2>
+    <div class="card"><canvas id="chart-category" height="220"></canvas></div>
+
+    <h2>Chi theo mức ưu tiên</h2>
+    <div class="card"><canvas id="chart-priority" height="180"></canvas></div>
+
+    <h2>Ngân sách tháng</h2>
+    <div class="card" id="budget-list"></div>
+  </div>
+</main>
+<script type="module" src="js/dashboard.js"></script>
+</body>
+</html>
