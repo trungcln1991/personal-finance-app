@@ -1,6 +1,10 @@
 import { renderNav, showError, clearError } from './nav.js';
 import { getToken, login, clearToken, testToken, hasToken } from './github-api.js';
-import { loadCategories, saveCategories, loadBudget, saveBudget, genId, formatNumber, parseAmountInput, attachAmountInput, categoryIcon } from './store.js';
+import {
+  loadCategories, saveCategories, loadBudget, saveBudget, genId, formatNumber, formatVnd,
+  parseAmountInput, attachAmountInput, categoryIcon,
+  PAYMENT_TYPES, OWNERS, paymentType, ownerLabel, normalizePaymentMethod,
+} from './store.js';
 
 renderNav('settings');
 
@@ -62,7 +66,97 @@ function renderCategoryList(containerId, list, onRemove, getIcon) {
 function renderAllCategoryLists() {
   renderCategoryList('expense-cat-list', categories.expense, removeExpenseCategory, categoryIcon);
   renderCategoryList('income-cat-list', categories.income, removeIncomeCategory, categoryIcon);
-  renderCategoryList('payment-list', categories.paymentMethods, removePaymentMethod);
+  renderPaymentList();
+}
+
+// ---- Phương thức thanh toán (có loại/chủ sở hữu/số dư, sửa được inline) ----
+
+let editingPaymentId = null;
+
+function selectOptions(list, selectedId) {
+  return list.map((o) => `<option value="${o.id}" ${o.id === selectedId ? 'selected' : ''}>${o.icon ? o.icon + ' ' : ''}${o.label}</option>`).join('');
+}
+
+function renderPaymentList() {
+  const el = document.getElementById('payment-list');
+  if (!categories.paymentMethods.length) {
+    el.innerHTML = '<p class="muted">Chưa có phương thức nào.</p>';
+    return;
+  }
+  el.innerHTML = categories.paymentMethods
+    .map((raw) => {
+      const p = normalizePaymentMethod(raw);
+      const t = paymentType(p.type);
+      const sub = t.tracksBalance
+        ? (p.initialBalanceDate ? `Số dư: ${formatVnd(p.initialBalance)} (từ ${p.initialBalanceDate})` : 'Chưa cấu hình số dư')
+        : t.label;
+      const editing = editingPaymentId === p.id;
+      return `
+        <div class="category-manage-row payment-row" data-id="${p.id}">
+          <div class="payment-row-main">
+            <span>${t.icon} ${p.name} <span class="muted">· ${ownerLabel(p.owner)}</span></span>
+            <span class="pm-sub">${sub}</span>
+          </div>
+          <button class="btn btn-secondary edit-btn">${editing ? 'Đóng' : 'Sửa'}</button>
+        </div>
+        ${editing ? paymentEditPanelHtml(p) : ''}`;
+    })
+    .join('');
+
+  el.querySelectorAll('.edit-btn').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const id = btn.closest('.payment-row').dataset.id;
+      editingPaymentId = editingPaymentId === id ? null : id;
+      renderPaymentList();
+    });
+  });
+
+  if (editingPaymentId) wirePaymentEditPanel();
+}
+
+function paymentEditPanelHtml(p) {
+  const t = paymentType(p.type);
+  return `
+    <div class="payment-edit-panel">
+      <div class="field"><input type="text" class="pe-name" value="${p.name}" /></div>
+      <div class="field"><label>Loại</label><select class="pe-type">${selectOptions(PAYMENT_TYPES, p.type)}</select></div>
+      <div class="field"><label>Chủ sở hữu</label><select class="pe-owner">${selectOptions(OWNERS, p.owner)}</select></div>
+      <div class="pe-balance-fields" style="display:${t.tracksBalance ? 'flex' : 'none'};gap:8px;">
+        <div class="field" style="flex:1;"><label>Số dư hiện có</label><input type="text" inputmode="numeric" class="pe-balance" value="${formatNumber(p.initialBalance)}" /></div>
+        <div class="field" style="flex:1;"><label>Tính từ ngày</label><input type="date" class="pe-balance-date" value="${p.initialBalanceDate || ''}" /></div>
+      </div>
+      <div style="display:flex;gap:8px;">
+        <button class="btn btn-primary pe-save">Lưu</button>
+        <button class="btn btn-danger pe-remove">Xoá</button>
+      </div>
+    </div>`;
+}
+
+function wirePaymentEditPanel() {
+  const panel = document.querySelector('#payment-list .payment-edit-panel');
+  if (!panel) return;
+  attachAmountInput(panel.querySelector('.pe-balance'));
+  panel.querySelector('.pe-type').addEventListener('change', (e) => {
+    panel.querySelector('.pe-balance-fields').style.display = paymentType(e.target.value).tracksBalance ? 'flex' : 'none';
+  });
+  panel.querySelector('.pe-save').addEventListener('click', async () => {
+    const idx = categories.paymentMethods.findIndex((c) => c.id === editingPaymentId);
+    if (idx === -1) return;
+    categories.paymentMethods[idx] = {
+      ...categories.paymentMethods[idx],
+      name: panel.querySelector('.pe-name').value.trim() || categories.paymentMethods[idx].name,
+      type: panel.querySelector('.pe-type').value,
+      owner: panel.querySelector('.pe-owner').value,
+      initialBalance: parseAmountInput(panel.querySelector('.pe-balance').value),
+      initialBalanceDate: panel.querySelector('.pe-balance-date').value || null,
+    };
+    try {
+      await persistCategories();
+      editingPaymentId = null;
+      renderPaymentList();
+    } catch (err) { showError(err); }
+  });
+  panel.querySelector('.pe-remove').addEventListener('click', () => removePaymentMethod(editingPaymentId));
 }
 
 async function persistCategories(message) {
@@ -85,7 +179,8 @@ async function removeIncomeCategory(id) {
 async function removePaymentMethod(id) {
   if (!confirm('Xoá phương thức thanh toán này?')) return;
   categories.paymentMethods = categories.paymentMethods.filter((c) => c.id !== id);
-  try { await persistCategories(); renderAllCategoryLists(); } catch (err) { showError(err); }
+  editingPaymentId = null;
+  try { await persistCategories(); renderPaymentList(); } catch (err) { showError(err); }
 }
 
 document.getElementById('add-expense-cat').addEventListener('click', async () => {
@@ -104,12 +199,36 @@ document.getElementById('add-income-cat').addEventListener('click', async () => 
   try { await persistCategories(); input.value = ''; renderAllCategoryLists(); } catch (err) { showError(err); }
 });
 
+const newPaymentTypeEl = document.getElementById('new-payment-type');
+const newPaymentOwnerEl = document.getElementById('new-payment-owner');
+newPaymentTypeEl.innerHTML = selectOptions(PAYMENT_TYPES, 'cash');
+newPaymentOwnerEl.innerHTML = selectOptions(OWNERS, 'shared');
+attachAmountInput(document.getElementById('new-payment-balance'));
+newPaymentTypeEl.addEventListener('change', () => {
+  document.getElementById('new-payment-balance-fields').style.display =
+    paymentType(newPaymentTypeEl.value).tracksBalance ? 'flex' : 'none';
+});
+
 document.getElementById('add-payment').addEventListener('click', async () => {
-  const input = document.getElementById('new-payment');
-  const name = input.value.trim();
+  const nameInput = document.getElementById('new-payment-name');
+  const name = nameInput.value.trim();
   if (!name) return;
-  categories.paymentMethods.push({ id: slugify(name) || genId(), name });
-  try { await persistCategories(); input.value = ''; renderAllCategoryLists(); } catch (err) { showError(err); }
+  const type = newPaymentTypeEl.value;
+  categories.paymentMethods.push({
+    id: slugify(name) || genId(),
+    name,
+    type,
+    owner: newPaymentOwnerEl.value,
+    initialBalance: paymentType(type).tracksBalance ? parseAmountInput(document.getElementById('new-payment-balance').value) : 0,
+    initialBalanceDate: paymentType(type).tracksBalance ? (document.getElementById('new-payment-balance-date').value || null) : null,
+  });
+  try {
+    await persistCategories();
+    nameInput.value = '';
+    document.getElementById('new-payment-balance').value = '';
+    document.getElementById('new-payment-balance-date').value = '';
+    renderPaymentList();
+  } catch (err) { showError(err); }
 });
 
 // ---- Ngân sách ----

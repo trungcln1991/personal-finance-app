@@ -121,3 +121,54 @@ const CATEGORY_ICONS = {
 export function categoryIcon(id) {
   return CATEGORY_ICONS[id] || '💵';
 }
+
+// ---- Phương thức thanh toán: loại + chủ sở hữu + số dư ----
+
+export const PAYMENT_TYPES = [
+  { id: 'cash', label: 'Tiền mặt', icon: '💵', tracksBalance: true },
+  { id: 'bank', label: 'Tài khoản ngân hàng', icon: '🏦', tracksBalance: true },
+  { id: 'credit', label: 'Thẻ tín dụng', icon: '💳', tracksBalance: false },
+  { id: 'wallet', label: 'Ví trả sau', icon: '🧾', tracksBalance: false },
+];
+
+export const OWNERS = [
+  { id: 'husband', label: 'Chồng' },
+  { id: 'wife', label: 'Vợ' },
+  { id: 'shared', label: 'Chung' },
+];
+
+export function paymentType(id) {
+  return PAYMENT_TYPES.find((t) => t.id === id) || PAYMENT_TYPES[0];
+}
+
+export function ownerLabel(id) {
+  return OWNERS.find((o) => o.id === id)?.label || 'Chung';
+}
+
+// Dữ liệu cũ (trước khi có type/owner) không có 2 trường này — mặc định tiền mặt, dùng chung.
+export function normalizePaymentMethod(p) {
+  return { type: 'cash', owner: 'shared', initialBalance: 0, initialBalanceDate: null, ...p };
+}
+
+// Đọc toàn bộ giao dịch từ 1 tháng trở về sau (để cộng dồn số dư tài khoản).
+export async function loadTransactionsRange(fromMonthKey) {
+  const months = await listAvailableMonths();
+  const targets = fromMonthKey ? months.filter((m) => m >= fromMonthKey) : months;
+  const results = await Promise.all(targets.map((m) => loadTransactions(m)));
+  return results.flatMap((r) => r.transactions);
+}
+
+// Số dư = số dư ban đầu (nhập tay tại 1 ngày) + cộng dồn thu/chi gắn phương thức đó từ ngày đó.
+// Trả về balance = null nếu chưa cấu hình ngày bắt đầu (tránh hiện số sai).
+export function computeAccountBalances(categories, allTx) {
+  return categories.paymentMethods
+    .map(normalizePaymentMethod)
+    .filter((p) => paymentType(p.type).tracksBalance)
+    .map((p) => {
+      if (!p.initialBalanceDate) return { ...p, balance: null };
+      const delta = allTx
+        .filter((t) => t.paymentMethod === p.id && t.date >= p.initialBalanceDate)
+        .reduce((s, t) => s + (t.type === 'income' ? t.amount : -t.amount), 0);
+      return { ...p, balance: p.initialBalance + delta };
+    });
+}

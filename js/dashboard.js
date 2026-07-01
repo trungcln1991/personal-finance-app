@@ -1,5 +1,8 @@
 import { renderNav, requireToken, showError } from './nav.js';
-import { loadCategories, loadBudget, loadTransactions, formatVnd, currentMonthKey, categoryName, categoryIcon } from './store.js';
+import {
+  loadCategories, loadBudget, loadTransactions, formatVnd, currentMonthKey, categoryName, categoryIcon,
+  OWNERS, paymentType, normalizePaymentMethod, loadTransactionsRange, computeAccountBalances,
+} from './store.js';
 
 renderNav('dashboard');
 
@@ -39,6 +42,59 @@ async function render(monthKey) {
     const balanceEl = document.getElementById('total-balance');
     balanceEl.textContent = formatVnd(balance);
     balanceEl.className = 'value ' + (balance >= 0 ? 'income-value' : 'expense-value');
+
+    // Số dư tiền mặt & tài khoản, chia theo chủ sở hữu
+    const balanceGrid = document.getElementById('owner-balance-grid');
+    const trackedAccounts = categories.paymentMethods.map(normalizePaymentMethod).filter((p) => paymentType(p.type).tracksBalance);
+    const earliestDate = trackedAccounts.filter((p) => p.initialBalanceDate).map((p) => p.initialBalanceDate).sort()[0];
+    const allTx = earliestDate ? await loadTransactionsRange(earliestDate.slice(0, 7)) : [];
+    const accounts = computeAccountBalances(categories, allTx);
+    const ownerCards = OWNERS.map((o) => {
+      const list = accounts.filter((a) => (a.owner || 'shared') === o.id);
+      if (!list.length) return '';
+      const total = list.reduce((s, a) => s + (a.balance || 0), 0);
+      const rows = list
+        .map(
+          (a) => `
+        <div class="account-row">
+          <span class="acc-name">${paymentType(a.type).icon} ${a.name}</span>
+          <span class="acc-balance ${a.balance === null ? 'unset' : ''}">${a.balance === null ? 'Chưa cấu hình' : formatVnd(a.balance)}</span>
+        </div>`
+        )
+        .join('');
+      return `
+        <div class="card owner-card">
+          <div class="owner-title">${o.label}</div>
+          <div class="owner-total">${formatVnd(total)}</div>
+          ${rows}
+        </div>`;
+    }).join('');
+    balanceGrid.innerHTML = ownerCards || '<p class="muted">Chưa có tài khoản tiền mặt/ngân hàng nào. Vào Cài đặt để thêm.</p>';
+
+    // Thẻ tín dụng & ví trả sau: đã chi bao nhiêu trong tháng
+    const cwCard = document.getElementById('credit-wallet-card');
+    const cwMethods = categories.paymentMethods.map(normalizePaymentMethod).filter((p) => !paymentType(p.type).tracksBalance);
+    if (!cwMethods.length) {
+      cwCard.innerHTML = '<p class="muted">Chưa có thẻ tín dụng/ví trả sau nào. Vào Cài đặt để thêm.</p>';
+    } else {
+      const spentByMethod = {};
+      for (const t of expense) if (t.paymentMethod) spentByMethod[t.paymentMethod] = (spentByMethod[t.paymentMethod] || 0) + t.amount;
+      const cwRows = cwMethods
+        .map(
+          (p) => `
+        <div class="cw-row">
+          <span>${paymentType(p.type).icon} ${p.name}<span class="cw-badge">${paymentType(p.type).label}</span></span>
+          <span>${formatVnd(spentByMethod[p.id] || 0)}</span>
+        </div>`
+        )
+        .join('');
+      const creditTotal = cwMethods.filter((p) => p.type === 'credit').reduce((s, p) => s + (spentByMethod[p.id] || 0), 0);
+      const walletTotal = cwMethods.filter((p) => p.type === 'wallet').reduce((s, p) => s + (spentByMethod[p.id] || 0), 0);
+      cwCard.innerHTML =
+        cwRows +
+        `<div class="cw-subtotal"><span>Tổng thẻ tín dụng</span><span>${formatVnd(creditTotal)}</span></div>` +
+        `<div class="cw-subtotal"><span>Tổng ví trả sau</span><span>${formatVnd(walletTotal)}</span></div>`;
+    }
 
     // Chi theo danh mục
     const byCategory = {};

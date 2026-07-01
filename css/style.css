@@ -336,9 +336,74 @@ form { display: flex; flex-direction: column; gap: 12px; }
   align-items: center;
   padding: 8px 0;
   border-bottom: 1px solid var(--surface-2);
+  gap: 10px;
+}
+
+.payment-row-main { display: flex; flex-direction: column; gap: 2px; }
+.payment-row-main .pm-sub { font-size: 0.75rem; color: var(--muted); }
+
+.payment-edit-panel {
+  background: var(--surface-2);
+  border-radius: 12px;
+  padding: 12px;
+  margin: 6px 0 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
 }
 
 .muted { color: var(--muted); font-size: 0.85rem; }
+
+/* ---- Số dư theo chủ sở hữu (dashboard) ---- */
+.owner-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 12px;
+  margin-bottom: 14px;
+}
+.owner-card .owner-title {
+  font-size: 0.75rem;
+  color: var(--muted);
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  margin-bottom: 6px;
+}
+.owner-card .owner-total { font-size: 1.15rem; font-weight: 800; margin-bottom: 10px; }
+.account-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.83rem;
+  padding: 6px 0;
+  border-top: 1px solid rgba(255,255,255,0.05);
+}
+.account-row:first-of-type { border-top: none; padding-top: 0; }
+.account-row .acc-name { color: var(--text); }
+.account-row .acc-balance { font-weight: 600; white-space: nowrap; }
+.account-row .acc-balance.unset { color: var(--muted); font-style: italic; font-weight: 400; font-size: 0.75rem; }
+
+/* ---- Thẻ tín dụng & ví trả sau (dashboard) ---- */
+.cw-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px 0;
+  border-bottom: 1px solid rgba(255,255,255,0.05);
+  font-size: 0.9rem;
+}
+.cw-row:last-of-type { border-bottom: none; }
+.cw-row .cw-badge { font-size: 0.72rem; color: var(--muted); margin-left: 6px; }
+.cw-subtotal {
+  display: flex;
+  justify-content: space-between;
+  font-weight: 700;
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid rgba(255,255,255,0.08);
+  font-size: 0.9rem;
+}
 
 .help-box {
   background: var(--surface);

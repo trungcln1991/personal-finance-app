@@ -55,8 +55,23 @@
   <details class="settings-section">
     <summary>Phương thức thanh toán</summary>
     <div class="section-body">
+      <p class="muted">Bấm vào 1 phương thức để sửa loại, chủ sở hữu, số dư.</p>
       <div id="payment-list"></div>
-      <div class="field" style="margin-top:12px;"><input type="text" id="new-payment" placeholder="Phương thức mới" /></div>
+      <div class="payment-edit-panel payment-add-panel" style="margin-top:12px;">
+        <div class="field"><input type="text" id="new-payment-name" placeholder="Tên phương thức mới (VD: Ví Momo)" /></div>
+        <div class="field">
+          <label>Loại</label>
+          <select id="new-payment-type"></select>
+        </div>
+        <div class="field">
+          <label>Chủ sở hữu</label>
+          <select id="new-payment-owner"></select>
+        </div>
+        <div id="new-payment-balance-fields" style="display:flex; gap:8px;">
+          <div class="field" style="flex:1;"><label>Số dư hiện có</label><input type="text" inputmode="numeric" id="new-payment-balance" placeholder="0" /></div>
+          <div class="field" style="flex:1;"><label>Tính từ ngày</label><input type="date" id="new-payment-balance-date" /></div>
+        </div>
+      </div>
       <button id="add-payment" class="btn btn-secondary btn-block">Thêm phương thức</button>
     </div>
   </details>
