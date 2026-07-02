@@ -1,13 +1,7 @@
 import { renderNav, requireToken, showError } from './nav.js';
-import { loadCategories, loadTransactions, deleteTransaction, formatVnd, currentMonthKey, categoryName, categoryIcon } from './store.js';
+import { loadCategories, loadTransactions, deleteTransaction, formatVnd, currentMonthKey, categoryName, categoryIcon, shiftMonthKey, paymentMethodName } from './store.js';
 
 renderNav('transactions');
-
-function shiftMonth(monthKey, delta) {
-  const [y, m] = monthKey.split('-').map(Number);
-  const d = new Date(y, m - 1 + delta, 1);
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
-}
 
 function monthLabel(monthKey) {
   const [y, m] = monthKey.split('-');
@@ -34,6 +28,26 @@ async function render() {
     const sorted = [...transactions].sort((a, b) => (a.date < b.date ? 1 : -1));
     listEl.innerHTML = sorted
       .map((t) => {
+        if (t.type === 'transfer') {
+          const name = `Chuyển: ${paymentMethodName(categories, t.fromPayment)} → ${paymentMethodName(categories, t.toPayment)}`;
+          return `
+            <div class="tx-row" data-id="${t.id}">
+              <div class="tx-main">
+                <span class="tx-icon">🔁</span>
+                <div class="tx-text">
+                  <span class="tx-cat">${name}</span>
+                  <span class="tx-note">${t.date}${t.note ? ' · ' + t.note : ''}</span>
+                </div>
+              </div>
+              <div style="display:flex;align-items:center;">
+                <span class="tx-amount transfer">↔ ${formatVnd(t.amount)}</span>
+                <div class="tx-actions">
+                  <button class="edit-btn" title="Sửa">✏️</button>
+                  <button class="del-btn" title="Xoá">🗑️</button>
+                </div>
+              </div>
+            </div>`;
+        }
         const name = categoryName(categories, t.type, t.category);
         const icon = t.type === 'income' ? '💰' : categoryIcon(t.category);
         const sign = t.type === 'income' ? '+' : '-';
@@ -81,8 +95,8 @@ async function render() {
   }
 }
 
-document.getElementById('prev-month').addEventListener('click', () => { monthKey = shiftMonth(monthKey, -1); render(); });
-document.getElementById('next-month').addEventListener('click', () => { monthKey = shiftMonth(monthKey, 1); render(); });
+document.getElementById('prev-month').addEventListener('click', () => { monthKey = shiftMonthKey(monthKey, -1); render(); });
+document.getElementById('next-month').addEventListener('click', () => { monthKey = shiftMonthKey(monthKey, 1); render(); });
 
 (async () => {
   if (!(await requireToken())) return;

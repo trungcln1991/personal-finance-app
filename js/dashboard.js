@@ -2,15 +2,10 @@ import { renderNav, requireToken, showError } from './nav.js';
 import {
   loadCategories, loadBudget, loadTransactions, formatVnd, currentMonthKey, categoryName, categoryIcon,
   OWNERS, paymentType, normalizePaymentMethod, loadTransactionsRange, computeAccountBalances,
+  shiftMonthKey, computeDebtStatus, payDebt, addTransaction, genId,
 } from './store.js';
 
 renderNav('dashboard');
-
-function shiftMonth(monthKey, delta) {
-  const [y, m] = monthKey.split('-').map(Number);
-  const d = new Date(y, m - 1 + delta, 1);
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
-}
 
 function monthLabel(monthKey) {
   const [y, m] = monthKey.split('-');
@@ -25,7 +20,7 @@ async function render(monthKey) {
   document.getElementById('month-label').textContent = monthLabel(monthKey);
 
   try {
-    const [{ categories }, { budget }, { transactions }] = await Promise.all([
+    const [{ categories, sha: categoriesSha }, { budget }, { transactions }] = await Promise.all([
       loadCategories(),
       loadBudget(),
       loadTransactions(monthKey),
@@ -71,29 +66,67 @@ async function render(monthKey) {
     }).join('');
     balanceGrid.innerHTML = ownerCards || '<p class="muted">Chưa có tài khoản tiền mặt/ngân hàng nào. Vào Cài đặt để thêm.</p>';
 
-    // Thẻ tín dụng & ví trả sau: đã chi bao nhiêu trong tháng
+    // Thẻ tín dụng & ví trả sau: nợ phải trả (tháng đã đóng) + phát sinh tháng này (chưa đến hạn)
     const cwCard = document.getElementById('credit-wallet-card');
-    const cwMethods = categories.paymentMethods.map(normalizePaymentMethod).filter((p) => !paymentType(p.type).tracksBalance);
-    if (!cwMethods.length) {
+    const cwMethodsRaw = categories.paymentMethods.map(normalizePaymentMethod).filter((p) => !paymentType(p.type).tracksBalance);
+    const todayMonthKey = currentMonthKey();
+    if (!cwMethodsRaw.length) {
       cwCard.innerHTML = '<p class="muted">Chưa có thẻ tín dụng/ví trả sau nào. Vào Cài đặt để thêm.</p>';
     } else {
-      const spentByMethod = {};
-      for (const t of expense) if (t.paymentMethod) spentByMethod[t.paymentMethod] = (spentByMethod[t.paymentMethod] || 0) + t.amount;
+      const earliestDebtMonth = cwMethodsRaw.filter((p) => p.lastPaidMonth).map((p) => p.lastPaidMonth).sort()[0];
+      const debtTx = earliestDebtMonth ? await loadTransactionsRange(earliestDebtMonth) : [];
+      const cwMethods = computeDebtStatus(categories, debtTx, todayMonthKey);
+      const payAccounts = trackedAccounts;
       const cwRows = cwMethods
-        .map(
-          (p) => `
-        <div class="cw-row">
-          <span>${paymentType(p.type).icon} ${p.name}<span class="cw-badge">${paymentType(p.type).label}</span></span>
-          <span>${formatVnd(spentByMethod[p.id] || 0)}</span>
-        </div>`
-        )
+        .map((p) => {
+          const debtInfo = !p.configured
+            ? '<p class="muted">Chưa cấu hình nợ — vào Cài đặt để thiết lập.</p>'
+            : `
+              <div class="cw-debt-rows">
+                <span class="owed">Nợ phải trả: ${formatVnd(p.owedAmount)}</span>
+                <span>Phát sinh tháng này (chưa đến hạn): ${formatVnd(p.currentMonthSpend)}</span>
+              </div>`;
+          const payRow = p.canPay && payAccounts.length
+            ? `
+              <div class="cw-pay-row" data-method="${p.id}" data-amount="${p.owedAmount}">
+                <select class="cw-pay-account">${payAccounts.map((a) => `<option value="${a.id}">${a.name}</option>`).join('')}</select>
+                <button class="cw-pay-btn">Đã trả nợ</button>
+              </div>`
+            : '';
+          return `
+            <div class="cw-row">
+              <span>${paymentType(p.type).icon} ${p.name}<span class="cw-badge">${paymentType(p.type).label}</span></span>
+            </div>
+            ${debtInfo}
+            ${payRow}`;
+        })
         .join('');
-      const creditTotal = cwMethods.filter((p) => p.type === 'credit').reduce((s, p) => s + (spentByMethod[p.id] || 0), 0);
-      const walletTotal = cwMethods.filter((p) => p.type === 'wallet').reduce((s, p) => s + (spentByMethod[p.id] || 0), 0);
-      cwCard.innerHTML =
-        cwRows +
-        `<div class="cw-subtotal"><span>Tổng thẻ tín dụng</span><span>${formatVnd(creditTotal)}</span></div>` +
-        `<div class="cw-subtotal"><span>Tổng ví trả sau</span><span>${formatVnd(walletTotal)}</span></div>`;
+      cwCard.innerHTML = cwRows;
+
+      cwCard.querySelectorAll('.cw-pay-row').forEach((row) => {
+        row.querySelector('.cw-pay-btn').addEventListener('click', async () => {
+          const methodId = row.dataset.method;
+          const amount = Number(row.dataset.amount);
+          const fromPayment = row.querySelector('.cw-pay-account').value;
+          const method = cwMethods.find((m) => m.id === methodId);
+          if (!confirm(`Xác nhận đã trả ${formatVnd(amount)} nợ ${method?.name || ''}?`)) return;
+          try {
+            await addTransaction(todayMonthKey, {
+              id: genId(),
+              date: new Date().toISOString().slice(0, 10),
+              type: 'transfer',
+              fromPayment,
+              toPayment: methodId,
+              amount,
+              note: `Trả nợ ${method?.name || ''}`,
+            });
+            await payDebt(categories, categoriesSha, methodId, todayMonthKey);
+            render(monthKey);
+          } catch (err) {
+            showError(err);
+          }
+        });
+      });
     }
 
     // Chi theo danh mục
@@ -177,11 +210,11 @@ async function render(monthKey) {
 let monthKey = currentMonthKey();
 
 document.getElementById('prev-month').addEventListener('click', () => {
-  monthKey = shiftMonth(monthKey, -1);
+  monthKey = shiftMonthKey(monthKey, -1);
   render(monthKey);
 });
 document.getElementById('next-month').addEventListener('click', () => {
-  monthKey = shiftMonth(monthKey, 1);
+  monthKey = shiftMonthKey(monthKey, 1);
   render(monthKey);
 });
 

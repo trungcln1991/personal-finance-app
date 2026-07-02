@@ -9,6 +9,16 @@ export function currentMonthKey() {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
 }
 
+export function shiftMonthKey(monthKey, delta) {
+  const [y, m] = monthKey.split('-').map(Number);
+  const d = new Date(y, m - 1 + delta, 1);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+}
+
+export function previousMonthKey(monthKey) {
+  return shiftMonthKey(monthKey, -1);
+}
+
 export function formatVnd(amount) {
   return new Intl.NumberFormat('vi-VN', { style: 'currency', currency: 'VND', maximumFractionDigits: 0 }).format(amount || 0);
 }
@@ -147,7 +157,7 @@ export function ownerLabel(id) {
 
 // Dữ liệu cũ (trước khi có type/owner) không có 2 trường này — mặc định tiền mặt, dùng chung.
 export function normalizePaymentMethod(p) {
-  return { type: 'cash', owner: 'shared', initialBalance: 0, initialBalanceDate: null, ...p };
+  return { type: 'cash', owner: 'shared', initialBalance: 0, initialBalanceDate: null, lastPaidMonth: null, ...p };
 }
 
 // Đọc toàn bộ giao dịch từ 1 tháng trở về sau (để cộng dồn số dư tài khoản).
@@ -158,8 +168,8 @@ export async function loadTransactionsRange(fromMonthKey) {
   return results.flatMap((r) => r.transactions);
 }
 
-// Số dư = số dư ban đầu (nhập tay tại 1 ngày) + cộng dồn thu/chi gắn phương thức đó từ ngày đó.
-// Trả về balance = null nếu chưa cấu hình ngày bắt đầu (tránh hiện số sai).
+// Số dư = số dư ban đầu (nhập tay tại 1 ngày) + cộng dồn thu/chi/chuyển khoản gắn phương thức đó
+// từ ngày đó. Trả về balance = null nếu chưa cấu hình ngày bắt đầu (tránh hiện số sai).
 export function computeAccountBalances(categories, allTx) {
   return categories.paymentMethods
     .map(normalizePaymentMethod)
@@ -167,8 +177,46 @@ export function computeAccountBalances(categories, allTx) {
     .map((p) => {
       if (!p.initialBalanceDate) return { ...p, balance: null };
       const delta = allTx
-        .filter((t) => t.paymentMethod === p.id && t.date >= p.initialBalanceDate)
-        .reduce((s, t) => s + (t.type === 'income' ? t.amount : -t.amount), 0);
+        .filter((t) => t.date >= p.initialBalanceDate)
+        .reduce((s, t) => {
+          if (t.type === 'transfer') {
+            if (t.toPayment === p.id) return s + t.amount;
+            if (t.fromPayment === p.id) return s - t.amount;
+            return s;
+          }
+          if (t.paymentMethod !== p.id) return s;
+          return s + (t.type === 'income' ? t.amount : -t.amount);
+        }, 0);
       return { ...p, balance: p.initialBalance + delta };
     });
+}
+
+// Nợ phải trả cho thẻ tín dụng/ví trả sau: cộng dồn chi tiêu các tháng đã đóng (trước tháng hiện
+// tại) mà chưa đánh dấu trả, tách riêng phần phát sinh tháng hiện tại (chưa đến hạn thanh toán).
+export function computeDebtStatus(categories, allTx, todayMonthKey) {
+  return categories.paymentMethods
+    .map(normalizePaymentMethod)
+    .filter((p) => !paymentType(p.type).tracksBalance)
+    .map((p) => {
+      if (!p.lastPaidMonth) return { ...p, configured: false, owedAmount: 0, currentMonthSpend: 0, canPay: false };
+      const spendByMonth = {};
+      for (const t of allTx) {
+        if (t.type !== 'expense' || t.paymentMethod !== p.id) continue;
+        const m = t.date.slice(0, 7);
+        spendByMonth[m] = (spendByMonth[m] || 0) + t.amount;
+      }
+      const owedAmount = Object.entries(spendByMonth)
+        .filter(([m]) => m > p.lastPaidMonth && m < todayMonthKey)
+        .reduce((s, [, v]) => s + v, 0);
+      const currentMonthSpend = spendByMonth[todayMonthKey] || 0;
+      return { ...p, configured: true, owedAmount, currentMonthSpend, canPay: owedAmount > 0 };
+    });
+}
+
+// Đánh dấu đã trả hết nợ tính đến trước tháng hiện tại (reset mốc, nợ cộng dồn lại từ tháng này).
+export async function payDebt(categories, categoriesSha, methodId, todayMonthKey) {
+  const idx = categories.paymentMethods.findIndex((p) => p.id === methodId);
+  if (idx === -1) throw new Error('Không tìm thấy phương thức thanh toán.');
+  categories.paymentMethods[idx] = { ...categories.paymentMethods[idx], lastPaidMonth: previousMonthKey(todayMonthKey) };
+  return saveCategories(categories, categoriesSha);
 }

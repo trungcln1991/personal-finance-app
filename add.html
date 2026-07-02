@@ -16,6 +16,7 @@
   <div class="type-toggle">
     <button type="button" id="type-income" class="income">Thu</button>
     <button type="button" id="type-expense" class="expense">Chi</button>
+    <button type="button" id="type-transfer" class="transfer">Chuyển khoản</button>
   </div>
 
   <form id="tx-form">
@@ -23,7 +24,7 @@
       <label for="f-date">Ngày</label>
       <input type="date" id="f-date" required />
     </div>
-    <div class="field">
+    <div class="field" id="category-field">
       <label for="f-category">Danh mục</label>
       <select id="f-category" required></select>
     </div>
@@ -38,6 +39,14 @@
     <div class="field" id="payment-field">
       <label for="f-payment">Phương thức thanh toán</label>
       <select id="f-payment"></select>
+    </div>
+    <div class="field" id="from-payment-field" style="display:none">
+      <label for="f-from-payment">Từ ví/tài khoản</label>
+      <select id="f-from-payment"></select>
+    </div>
+    <div class="field" id="to-payment-field" style="display:none">
+      <label for="f-to-payment">Đến ví/tài khoản</label>
+      <select id="f-to-payment"></select>
     </div>
     <div class="field">
       <label for="f-note">Ghi chú</label>

@@ -71,6 +71,10 @@
           <div class="field" style="flex:1;"><label>Số dư hiện có</label><input type="text" inputmode="numeric" id="new-payment-balance" placeholder="0" /></div>
           <div class="field" style="flex:1;"><label>Tính từ ngày</label><input type="date" id="new-payment-balance-date" /></div>
         </div>
+        <div class="field" id="new-payment-debt-field" style="display:none;">
+          <label>Đã thanh toán nợ đến hết tháng</label>
+          <input type="month" id="new-payment-last-paid-month" />
+        </div>
       </div>
       <button id="add-payment" class="btn btn-secondary btn-block">Thêm phương thức</button>
     </div>
