@@ -4,6 +4,7 @@ import {
   loadCategories, saveCategories, loadBudget, saveBudget, genId, formatNumber, formatVnd,
   parseAmountInput, attachAmountInput, categoryIcon, currentMonthKey, previousMonthKey,
   PAYMENT_TYPES, OWNERS, paymentType, ownerLabel, normalizePaymentMethod,
+  resolveVersioned, addVersionOverride, paymentMethodName,
 } from './store.js';
 
 renderNav('settings');
@@ -242,43 +243,200 @@ document.getElementById('add-payment').addEventListener('click', async () => {
   } catch (err) { showError(err); }
 });
 
-// ---- Ngân sách ----
-function renderBudgetForm() {
-  const year = String(new Date().getFullYear());
-  document.getElementById('budget-year').textContent = year;
-  const yearBudget = budget[year] || {};
-  const el = document.getElementById('budget-form');
-  el.innerHTML = categories.expense
-    .map((c) => {
-      const cfg = yearBudget[c.id] || { monthlyAmount: 0, alertThreshold: 0.9 };
-      return `
-        <div class="field" data-cat="${c.id}">
-          <label>${c.name}</label>
-          <input type="text" inputmode="numeric" class="budget-amount" value="${formatNumber(cfg.monthlyAmount)}" />
-        </div>`;
-    })
-    .join('');
-  el.querySelectorAll('.budget-amount').forEach(attachAmountInput);
+// ---- Ngân sách: mỗi danh mục chi lưu 1 dãy "versions" hiệu lực theo tháng ----
+// Sửa 1 danh mục cho phép chọn: áp dụng từ tháng đã chọn về sau, hoặc chỉ đúng tháng đó
+// (tháng sau tự quay lại số cũ) — nhờ đó xem lại tháng cũ vẫn đúng số ngân sách lúc đó.
+
+let editingBudgetCatId = null;
+
+function scopeRadiosHtml(prefix) {
+  return `
+    <div class="field">
+      <label><input type="radio" name="${prefix}-scope" class="${prefix}-scope-permanent" checked /> Từ tháng đã chọn về sau</label><br/>
+      <label><input type="radio" name="${prefix}-scope" class="${prefix}-scope-temp" /> Chỉ tháng đã chọn (tháng sau tự quay lại số cũ)</label>
+    </div>`;
 }
 
-document.getElementById('save-budget').addEventListener('click', async () => {
-  clearError();
-  const year = String(new Date().getFullYear());
-  const yearBudget = {};
-  document.querySelectorAll('#budget-form .field').forEach((field) => {
-    const catId = field.dataset.cat;
-    const amount = parseAmountInput(field.querySelector('.budget-amount').value);
-    const cat = categories.expense.find((c) => c.id === catId);
-    yearBudget[catId] = { name: cat?.name || catId, monthlyAmount: amount, alertThreshold: 0.9 };
+function renderBudgetList() {
+  const el = document.getElementById('budget-list-settings');
+  const refMonth = currentMonthKey();
+  const budgetCategories = budget.categories || (budget.categories = {});
+  el.innerHTML = categories.expense
+    .map((c) => {
+      const cfg = budgetCategories[c.id];
+      const active = cfg ? resolveVersioned(cfg.versions, refMonth) : null;
+      const editing = editingBudgetCatId === c.id;
+      return `
+        <div class="category-manage-row payment-row" data-id="${c.id}">
+          <div class="payment-row-main">
+            <span>${categoryIcon(c.id)} ${c.name}</span>
+            <span class="pm-sub">${active ? `Hiện tại: ${formatVnd(active.monthlyAmount)}/tháng` : 'Chưa cấu hình'}</span>
+          </div>
+          <button class="btn btn-secondary edit-btn">${editing ? 'Đóng' : 'Sửa'}</button>
+        </div>
+        ${editing ? budgetEditPanelHtml(c, cfg, active) : ''}`;
+    })
+    .join('');
+
+  el.querySelectorAll('.edit-btn').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const id = btn.closest('.payment-row').dataset.id;
+      editingBudgetCatId = editingBudgetCatId === id ? null : id;
+      renderBudgetList();
+    });
   });
-  budget[year] = yearBudget;
-  try {
-    const result = await saveBudget(budget, budgetSha);
-    budgetSha = result.content.sha;
-    alert('Đã lưu ngân sách.');
-  } catch (err) {
-    showError(err);
+  if (editingBudgetCatId) wireBudgetEditPanel();
+}
+
+function budgetEditPanelHtml(c, cfg, active) {
+  const thresholdPct = Math.round(((cfg?.alertThreshold ?? 0.9)) * 100);
+  return `
+    <div class="payment-edit-panel">
+      <div class="field"><label>Số tiền/tháng</label><input type="text" inputmode="numeric" class="be-amount" value="${active ? formatNumber(active.monthlyAmount) : ''}" /></div>
+      <div class="field"><label>Ngưỡng cảnh báo (%)</label><input type="text" inputmode="numeric" class="be-threshold" value="${formatNumber(thresholdPct)}" /></div>
+      <div class="field"><label>Áp dụng từ tháng</label><input type="month" class="be-month" value="${currentMonthKey()}" /></div>
+      ${scopeRadiosHtml('be')}
+      <button class="btn btn-primary be-save">Lưu</button>
+    </div>`;
+}
+
+function wireBudgetEditPanel() {
+  const panel = document.querySelector('#budget-list-settings .payment-edit-panel');
+  if (!panel) return;
+  attachAmountInput(panel.querySelector('.be-amount'));
+  attachAmountInput(panel.querySelector('.be-threshold'));
+  panel.querySelector('.be-save').addEventListener('click', async () => {
+    const catId = editingBudgetCatId;
+    const monthKey = panel.querySelector('.be-month').value;
+    if (!monthKey) { alert('Chọn tháng áp dụng.'); return; }
+    const amount = parseAmountInput(panel.querySelector('.be-amount').value);
+    const thresholdPct = parseAmountInput(panel.querySelector('.be-threshold').value);
+    const temporary = panel.querySelector('.be-scope-temp').checked;
+    const cat = categories.expense.find((c) => c.id === catId);
+    const existing = budget.categories[catId] || { name: cat?.name || catId, alertThreshold: 0.9, versions: [] };
+    existing.name = cat?.name || existing.name;
+    existing.alertThreshold = thresholdPct / 100;
+    existing.versions = addVersionOverride(existing.versions, monthKey, { monthlyAmount: amount }, temporary);
+    budget.categories[catId] = existing;
+    try {
+      const result = await saveBudget(budget, budgetSha);
+      budgetSha = result.content.sha;
+      editingBudgetCatId = null;
+      renderBudgetList();
+    } catch (err) { showError(err); }
+  });
+}
+
+// ---- Thu nhập mặc định (lương hàng tháng...) ----
+// App sẽ tự thêm giao dịch Thu vào đầu mỗi tháng thực tế theo giá trị đang hiệu lực,
+// không thêm trùng (kiểm tra qua defaultIncomeId), không tự thêm cho tháng đã qua.
+
+let editingIncomeId = null;
+
+function renderDefaultIncomeList() {
+  const el = document.getElementById('default-income-list');
+  const list = categories.defaultIncomes || [];
+  if (!list.length) {
+    el.innerHTML = '<p class="muted">Chưa có khoản thu mặc định nào.</p>';
+    return;
   }
+  const refMonth = currentMonthKey();
+  el.innerHTML = list
+    .map((d) => {
+      const active = resolveVersioned(d.versions, refMonth);
+      const editing = editingIncomeId === d.id;
+      return `
+        <div class="category-manage-row payment-row" data-id="${d.id}">
+          <div class="payment-row-main">
+            <span>${d.name} <span class="muted">· ${paymentMethodName(categories, d.paymentMethod)}</span></span>
+            <span class="pm-sub">${active ? `Hiện tại: ${formatVnd(active.amount)}/tháng` : 'Chưa/ngừng áp dụng'}</span>
+          </div>
+          <button class="btn btn-secondary edit-btn">${editing ? 'Đóng' : 'Sửa'}</button>
+        </div>
+        ${editing ? incomeEditPanelHtml(d, active) : ''}`;
+    })
+    .join('');
+
+  el.querySelectorAll('.edit-btn').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const id = btn.closest('.payment-row').dataset.id;
+      editingIncomeId = editingIncomeId === id ? null : id;
+      renderDefaultIncomeList();
+    });
+  });
+  if (editingIncomeId) wireIncomeEditPanel();
+}
+
+function incomeEditPanelHtml(d, active) {
+  const paymentOptions =
+    '<option value="">—</option>' +
+    categories.paymentMethods.map((p) => `<option value="${p.id}" ${p.id === d.paymentMethod ? 'selected' : ''}>${p.name}</option>`).join('');
+  return `
+    <div class="payment-edit-panel">
+      <div class="field"><input type="text" class="ie-name" value="${d.name}" /></div>
+      <div class="field"><label>Phương thức nhận</label><select class="ie-payment">${paymentOptions}</select></div>
+      <div class="field"><label>Số tiền/tháng</label><input type="text" inputmode="numeric" class="ie-amount" value="${active ? formatNumber(active.amount) : ''}" /></div>
+      <div class="field"><label>Áp dụng từ tháng</label><input type="month" class="ie-month" value="${currentMonthKey()}" /></div>
+      ${scopeRadiosHtml('ie')}
+      <div style="display:flex;gap:8px;">
+        <button class="btn btn-primary ie-save">Lưu</button>
+        <button class="btn btn-danger ie-remove">Xoá</button>
+      </div>
+    </div>`;
+}
+
+function wireIncomeEditPanel() {
+  const panel = document.querySelector('#default-income-list .payment-edit-panel');
+  if (!panel) return;
+  attachAmountInput(panel.querySelector('.ie-amount'));
+  panel.querySelector('.ie-save').addEventListener('click', async () => {
+    const idx = categories.defaultIncomes.findIndex((d) => d.id === editingIncomeId);
+    if (idx === -1) return;
+    const monthKey = panel.querySelector('.ie-month').value;
+    if (!monthKey) { alert('Chọn tháng áp dụng.'); return; }
+    const temporary = panel.querySelector('.ie-scope-temp').checked;
+    const amount = parseAmountInput(panel.querySelector('.ie-amount').value);
+    const d = categories.defaultIncomes[idx];
+    d.name = panel.querySelector('.ie-name').value.trim() || d.name;
+    d.paymentMethod = panel.querySelector('.ie-payment').value || null;
+    d.versions = addVersionOverride(d.versions, monthKey, { amount }, temporary);
+    try {
+      await persistCategories();
+      editingIncomeId = null;
+      renderDefaultIncomeList();
+    } catch (err) { showError(err); }
+  });
+  panel.querySelector('.ie-remove').addEventListener('click', async () => {
+    if (!confirm('Xoá khoản thu mặc định này? (Các giao dịch đã tạo trước đó vẫn giữ nguyên, chỉ ngừng tự tạo thêm)')) return;
+    categories.defaultIncomes = categories.defaultIncomes.filter((d) => d.id !== editingIncomeId);
+    editingIncomeId = null;
+    try { await persistCategories(); renderDefaultIncomeList(); } catch (err) { showError(err); }
+  });
+}
+
+document.getElementById('add-default-income').addEventListener('click', async () => {
+  const nameInput = document.getElementById('new-income-name');
+  const name = nameInput.value.trim();
+  if (!name) return;
+  const category = document.getElementById('new-income-category').value;
+  const paymentMethod = document.getElementById('new-income-payment').value || null;
+  const amount = parseAmountInput(document.getElementById('new-income-amount').value);
+  const fromMonth = document.getElementById('new-income-from-month').value || currentMonthKey();
+  categories.defaultIncomes = categories.defaultIncomes || [];
+  categories.defaultIncomes.push({
+    id: slugify(name) || genId(),
+    name,
+    category,
+    paymentMethod,
+    versions: [{ from: fromMonth, amount }],
+  });
+  try {
+    await persistCategories();
+    nameInput.value = '';
+    document.getElementById('new-income-amount').value = '';
+    document.getElementById('new-income-from-month').value = '';
+    renderDefaultIncomeList();
+  } catch (err) { showError(err); }
 });
 
 async function init() {
@@ -287,10 +445,15 @@ async function init() {
   categoriesSha = catResult.sha;
   renderAllCategoryLists();
 
+  document.getElementById('new-income-category').innerHTML = categories.income.map((c) => `<option value="${c.id}">${c.name}</option>`).join('');
+  document.getElementById('new-income-payment').innerHTML =
+    '<option value="">—</option>' + categories.paymentMethods.map((p) => `<option value="${p.id}">${p.name}</option>`).join('');
+  renderDefaultIncomeList();
+
   const budgetResult = await loadBudget();
   budget = budgetResult.budget;
   budgetSha = budgetResult.sha;
-  renderBudgetForm();
+  renderBudgetList();
 }
 
 if (getToken()) {

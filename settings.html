@@ -81,10 +81,32 @@
   </details>
 
   <details class="settings-section">
-    <summary>Ngân sách năm <span id="budget-year"></span></summary>
+    <summary>Ngân sách chi tiêu</summary>
     <div class="section-body">
-      <div id="budget-form"></div>
-      <button id="save-budget" class="btn btn-primary btn-block" style="margin-top:12px;">Lưu ngân sách</button>
+      <p class="muted">Bấm vào 1 danh mục để sửa số tiền ngân sách — chọn áp dụng từ tháng đã chọn về sau, hoặc chỉ đúng tháng đó.</p>
+      <div id="budget-list-settings"></div>
+    </div>
+  </details>
+
+  <details class="settings-section">
+    <summary>Thu nhập mặc định (lương hàng tháng)</summary>
+    <div class="section-body">
+      <p class="muted">App tự động thêm các khoản thu này vào đầu mỗi tháng thực tế (không thêm trùng, không tự thêm cho tháng đã qua).</p>
+      <div id="default-income-list"></div>
+      <div class="payment-edit-panel payment-add-panel" style="margin-top:12px;">
+        <div class="field"><input type="text" id="new-income-name" placeholder="Tên khoản thu (VD: Lương chồng)" /></div>
+        <div class="field">
+          <label>Danh mục thu</label>
+          <select id="new-income-category"></select>
+        </div>
+        <div class="field">
+          <label>Phương thức nhận</label>
+          <select id="new-income-payment"></select>
+        </div>
+        <div class="field"><label>Số tiền/tháng</label><input type="text" inputmode="numeric" id="new-income-amount" placeholder="0" /></div>
+        <div class="field"><label>Áp dụng từ tháng</label><input type="month" id="new-income-from-month" /></div>
+      </div>
+      <button id="add-default-income" class="btn btn-secondary btn-block">Thêm khoản thu mặc định</button>
     </div>
   </details>
 </main>

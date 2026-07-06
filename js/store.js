@@ -41,7 +41,7 @@ export function attachAmountInput(el) {
 
 export async function loadCategories() {
   const { data, sha } = await getJsonFile('categories.json');
-  return { categories: data || { income: [], expense: [], paymentMethods: [], priorities: [] }, sha };
+  return { categories: data || { income: [], expense: [], paymentMethods: [], priorities: [], defaultIncomes: [] }, sha };
 }
 
 export async function saveCategories(categories, sha) {
@@ -50,7 +50,40 @@ export async function saveCategories(categories, sha) {
 
 export async function loadBudget() {
   const { data, sha } = await getJsonFile('budget.json');
-  return { budget: data || {}, sha };
+  return { budget: data || { categories: {} }, sha };
+}
+
+// ---- Giá trị hiệu lực theo tháng (budget theo danh mục, lương mặc định...) ----
+// Mỗi field-cần-đổi-theo-thời-gian lưu 1 mảng "versions": [{ from: 'YYYY-MM', until?: 'YYYY-MM', ...giá trị }].
+// Bản ghi có hiệu lực cho 1 tháng = bản ghi có from <= tháng đó (và until >= tháng đó nếu có until),
+// ưu tiên bản ghi có from lớn nhất trong số các bản ghi thoả điều kiện.
+
+export function resolveVersioned(versions, monthKey) {
+  const candidates = (versions || []).filter((v) => v.from <= monthKey && (!v.until || monthKey <= v.until));
+  if (!candidates.length) return null;
+  return candidates.reduce((best, v) => (v.from > best.from ? v : best));
+}
+
+function stripVersionMeta(v) {
+  const { from, until, ...rest } = v;
+  return rest;
+}
+
+// Thêm 1 bản ghi hiệu lực mới bắt đầu từ monthKey.
+// temporary=true: chỉ áp dụng đúng monthKey đó, tháng sau tự động quay lại giá trị trước đó.
+// temporary=false: áp dụng từ monthKey trở về sau (không giới hạn), các tháng trước đó giữ nguyên.
+export function addVersionOverride(versions, monthKey, valueFields, temporary) {
+  const list = (versions || []).filter((v) => v.from !== monthKey);
+  const prevActive = resolveVersioned(list, monthKey);
+  list.push({ from: monthKey, ...(temporary ? { until: monthKey } : {}), ...valueFields });
+  if (temporary) {
+    const nextMonth = shiftMonthKey(monthKey, 1);
+    const nextAlreadyHasOverride = list.some((v) => v.from === nextMonth);
+    if (!nextAlreadyHasOverride && prevActive) {
+      list.push({ from: nextMonth, ...stripVersionMeta(prevActive) });
+    }
+  }
+  return list.sort((a, b) => (a.from < b.from ? -1 : 1));
 }
 
 export async function saveBudget(budget, sha) {

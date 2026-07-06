@@ -1,8 +1,8 @@
 import { renderNav, requireToken, showError } from './nav.js';
 import {
-  loadCategories, loadBudget, loadTransactions, formatVnd, currentMonthKey, categoryName, categoryIcon,
+  loadCategories, loadBudget, loadTransactions, saveTransactions, formatVnd, currentMonthKey, categoryName, categoryIcon,
   OWNERS, paymentType, normalizePaymentMethod, loadTransactionsRange, computeAccountBalances,
-  shiftMonthKey, computeDebtStatus, payDebt, addTransaction, genId,
+  shiftMonthKey, computeDebtStatus, payDebt, addTransaction, genId, resolveVersioned,
 } from './store.js';
 
 renderNav('dashboard');
@@ -20,11 +20,39 @@ async function render(monthKey) {
   document.getElementById('month-label').textContent = monthLabel(monthKey);
 
   try {
-    const [{ categories, sha: categoriesSha }, { budget }, { transactions }] = await Promise.all([
+    const [{ categories, sha: categoriesSha }, { budget }, { transactions, sha: txSha }] = await Promise.all([
       loadCategories(),
       loadBudget(),
       loadTransactions(monthKey),
     ]);
+
+    // Tự động thêm thu nhập mặc định (lương...) cho tháng hiện tại nếu chưa có,
+    // theo giá trị đang hiệu lực (versions) tại tháng đó. Chỉ áp dụng cho tháng thực tế hiện tại
+    // (không tự thêm khi bấm xem lại tháng cũ hoặc xem trước tháng tương lai).
+    if (monthKey === currentMonthKey() && categories.defaultIncomes?.length) {
+      const missing = categories.defaultIncomes.filter((d) => !transactions.some((t) => t.defaultIncomeId === d.id));
+      const newTx = missing
+        .map((d) => {
+          const active = resolveVersioned(d.versions, monthKey);
+          if (!active || !active.amount) return null;
+          return {
+            id: genId(),
+            date: `${monthKey}-01`,
+            type: 'income',
+            category: d.category,
+            amount: active.amount,
+            paymentMethod: d.paymentMethod || null,
+            note: d.name,
+            defaultIncomeId: d.id,
+          };
+        })
+        .filter(Boolean);
+      if (newTx.length) {
+        transactions.push(...newTx);
+        transactions.sort((a, b) => (a.date < b.date ? -1 : 1));
+        await saveTransactions(monthKey, transactions, txSha, `Tự động thêm thu nhập mặc định tháng ${monthKey}`);
+      }
+    }
 
     const income = transactions.filter((t) => t.type === 'income');
     const expense = transactions.filter((t) => t.type === 'expense');
@@ -187,24 +215,25 @@ async function render(monthKey) {
       },
     });
 
-    // Ngân sách tháng
-    const year = monthKey.split('-')[0];
-    const yearBudget = budget[year] || {};
+    // Ngân sách tháng (lấy giá trị đang hiệu lực tại monthKey, xem tháng cũ vẫn đúng số lúc đó)
+    const budgetCategories = budget.categories || {};
+    const rows = Object.entries(budgetCategories)
+      .map(([catId, cfg]) => [catId, cfg, resolveVersioned(cfg.versions, monthKey)])
+      .filter(([, , active]) => active);
     const budgetList = document.getElementById('budget-list');
-    const rows = Object.entries(yearBudget);
     if (!rows.length) {
-      budgetList.innerHTML = '<p class="muted">Chưa cấu hình ngân sách cho năm này. Vào Cài đặt để thêm.</p>';
+      budgetList.innerHTML = '<p class="muted">Chưa cấu hình ngân sách. Vào Cài đặt để thêm.</p>';
     } else {
       budgetList.innerHTML = rows
-        .map(([catId, cfg]) => {
+        .map(([catId, cfg, active]) => {
           const spent = byCategory[catId] || 0;
-          const pct = cfg.monthlyAmount > 0 ? spent / cfg.monthlyAmount : 0;
-          const cls = pct >= 1 ? 'over' : pct >= (cfg.alertThreshold || 0.9) ? 'warn' : '';
+          const pct = active.monthlyAmount > 0 ? spent / active.monthlyAmount : 0;
+          const cls = pct >= 1 ? 'over' : pct >= (cfg.alertThreshold ?? 0.9) ? 'warn' : '';
           return `
             <div class="budget-row">
               <div class="row-top">
                 <span>${categoryIcon(catId)} ${cfg.name || catId}</span>
-                <span>${formatVnd(spent)} / ${formatVnd(cfg.monthlyAmount)}</span>
+                <span>${formatVnd(spent)} / ${formatVnd(active.monthlyAmount)}</span>
               </div>
               <div class="progress-bar"><div class="progress-fill ${cls}" style="width:${Math.min(pct, 1) * 100}%"></div></div>
             </div>`;
