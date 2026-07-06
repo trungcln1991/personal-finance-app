@@ -210,7 +210,7 @@ export function computeAccountBalances(categories, allTx) {
     .map((p) => {
       if (!p.initialBalanceDate) return { ...p, balance: null };
       const delta = allTx
-        .filter((t) => t.date >= p.initialBalanceDate)
+        .filter((t) => t.date >= p.initialBalanceDate && !t.excludeFromBalance)
         .reduce((s, t) => {
           if (t.type === 'transfer') {
             if (t.toPayment === p.id) return s + t.amount;
