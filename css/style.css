@@ -117,7 +117,7 @@ h2 { font-size: 1.05rem; margin: 22px 0 10px; color: var(--muted); font-weight: 
 form { display: flex; flex-direction: column; gap: 12px; }
 
 .field label { display: block; font-size: 0.85rem; color: var(--muted); margin-bottom: 4px; }
-.field input, .field select, .field textarea {
+.field input:not([type="radio"]):not([type="checkbox"]), .field select, .field textarea {
   width: 100%;
   padding: 10px 12px;
   border-radius: 10px;
@@ -126,6 +126,16 @@ form { display: flex; flex-direction: column; gap: 12px; }
   color: var(--text);
   font-size: 1rem;
 }
+.field .radio-option {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.85rem;
+  color: var(--text);
+  margin-bottom: 6px;
+  cursor: pointer;
+}
+.field .radio-option input[type="radio"] { width: auto; margin: 0; accent-color: var(--accent); }
 
 .type-toggle { display: flex; gap: 8px; }
 .type-toggle button {

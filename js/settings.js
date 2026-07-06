@@ -252,8 +252,8 @@ let editingBudgetCatId = null;
 function scopeRadiosHtml(prefix) {
   return `
     <div class="field">
-      <label><input type="radio" name="${prefix}-scope" class="${prefix}-scope-permanent" checked /> Từ tháng đã chọn về sau</label><br/>
-      <label><input type="radio" name="${prefix}-scope" class="${prefix}-scope-temp" /> Chỉ tháng đã chọn (tháng sau tự quay lại số cũ)</label>
+      <label class="radio-option"><input type="radio" name="${prefix}-scope" class="${prefix}-scope-permanent" checked /> Từ tháng đã chọn về sau</label>
+      <label class="radio-option"><input type="radio" name="${prefix}-scope" class="${prefix}-scope-temp" /> Chỉ tháng đã chọn (tháng sau tự quay lại số cũ)</label>
     </div>`;
 }
 
