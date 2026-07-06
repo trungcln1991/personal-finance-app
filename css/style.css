@@ -173,6 +173,18 @@ form { display: flex; flex-direction: column; gap: 12px; }
 .btn-danger { background: rgba(239,68,68,0.15); color: var(--red); }
 .btn-block { width: 100%; }
 
+.tx-filters { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 14px; }
+.tx-filters select, .tx-filters input[type="text"] {
+  padding: 8px 10px;
+  border-radius: 10px;
+  border: 1px solid var(--surface-2);
+  background: var(--surface-2);
+  color: var(--text);
+  font-size: 0.85rem;
+}
+.tx-filters input[type="text"] { flex: 1; min-width: 140px; }
+.tx-filters button { padding: 8px 12px; font-size: 0.85rem; }
+
 .tx-list { display: flex; flex-direction: column; gap: 8px; }
 .tx-row {
   display: flex;

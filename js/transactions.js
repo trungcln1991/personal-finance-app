@@ -10,23 +10,68 @@ function monthLabel(monthKey) {
 
 const params = new URLSearchParams(location.search);
 let monthKey = params.get('month') || currentMonthKey();
+let categories = null;
+let transactions = [];
 
-async function render() {
-  document.getElementById('month-label').textContent = monthLabel(monthKey);
-  document.getElementById('loading').style.display = 'block';
+const filterTypeEl = document.getElementById('filter-type');
+const filterCategoryEl = document.getElementById('filter-category');
+const filterPaymentEl = document.getElementById('filter-payment');
+const filterPriorityEl = document.getElementById('filter-priority');
+const filterNoteEl = document.getElementById('filter-note');
+
+function populateFilterOptions() {
+  const catOptions = [
+    ...categories.income.map((c) => `<option value="${c.id}">💰 ${c.name}</option>`),
+    ...categories.expense.map((c) => `<option value="${c.id}">${categoryIcon(c.id)} ${c.name}</option>`),
+  ];
+  filterCategoryEl.innerHTML = '<option value="">Tất cả danh mục</option>' + catOptions.join('');
+  filterPaymentEl.innerHTML =
+    '<option value="">Tất cả phương thức</option>' + categories.paymentMethods.map((p) => `<option value="${p.id}">${p.name}</option>`).join('');
+  filterPriorityEl.innerHTML =
+    '<option value="">Tất cả mức ưu tiên</option>' + categories.priorities.map((p) => `<option value="${p.id}">${p.name}</option>`).join('');
+}
+
+function matchesFilters(t) {
+  const type = filterTypeEl.value;
+  const cat = filterCategoryEl.value;
+  const payment = filterPaymentEl.value;
+  const priority = filterPriorityEl.value;
+  const note = filterNoteEl.value.trim().toLowerCase();
+  if (type && t.type !== type) return false;
+  if (cat && t.category !== cat) return false;
+  if (payment) {
+    const matchesPayment = t.type === 'transfer' ? t.fromPayment === payment || t.toPayment === payment : t.paymentMethod === payment;
+    if (!matchesPayment) return false;
+  }
+  if (priority && t.priority !== priority) return false;
+  if (note && !(t.note || '').toLowerCase().includes(note)) return false;
+  return true;
+}
+
+function renderList() {
   const listEl = document.getElementById('tx-list');
-  listEl.innerHTML = '';
-  try {
-    const [{ categories }, { transactions }] = await Promise.all([loadCategories(), loadTransactions(monthKey)]);
-    document.getElementById('loading').style.display = 'none';
+  const summaryEl = document.getElementById('filter-summary');
+  const filtered = transactions.filter(matchesFilters);
+  const hasActiveFilter = [filterTypeEl, filterCategoryEl, filterPaymentEl, filterPriorityEl].some((el) => el.value) || filterNoteEl.value.trim();
 
-    if (!transactions.length) {
-      listEl.innerHTML = '<p class="muted">Chưa có giao dịch nào trong tháng này.</p>';
-      return;
-    }
+  if (hasActiveFilter) {
+    summaryEl.style.display = 'block';
+    summaryEl.textContent = `Đang lọc: ${filtered.length}/${transactions.length} giao dịch`;
+  } else {
+    summaryEl.style.display = 'none';
+  }
 
-    const sorted = [...transactions].sort((a, b) => (a.date < b.date ? 1 : -1));
-    listEl.innerHTML = sorted
+  if (!transactions.length) {
+    listEl.innerHTML = '<p class="muted">Chưa có giao dịch nào trong tháng này.</p>';
+    return;
+  }
+  if (!filtered.length) {
+    listEl.innerHTML = '<p class="muted">Không có giao dịch nào khớp bộ lọc.</p>';
+    return;
+  }
+
+  const sorted = [...filtered].sort((a, b) => (a.date < b.date ? 1 : -1));
+  listEl.innerHTML = sorted
       .map((t) => {
         if (t.type === 'transfer') {
           const name = `Chuyển: ${paymentMethodName(categories, t.fromPayment)} → ${paymentMethodName(categories, t.toPayment)}`;
@@ -71,34 +116,58 @@ async function render() {
       })
       .join('');
 
-    listEl.querySelectorAll('.edit-btn').forEach((btn) => {
-      btn.addEventListener('click', () => {
-        const id = btn.closest('.tx-row').dataset.id;
-        location.href = `add.html?edit=${id}&month=${monthKey}`;
-      });
+  listEl.querySelectorAll('.edit-btn').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const id = btn.closest('.tx-row').dataset.id;
+      location.href = `add.html?edit=${id}&month=${monthKey}`;
     });
-    listEl.querySelectorAll('.del-btn').forEach((btn) => {
-      btn.addEventListener('click', async () => {
-        const id = btn.closest('.tx-row').dataset.id;
-        if (!confirm('Xoá giao dịch này?')) return;
-        try {
-          await deleteTransaction(monthKey, id);
-          render();
-        } catch (err) {
-          showError(err);
-        }
-      });
+  });
+  listEl.querySelectorAll('.del-btn').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      const id = btn.closest('.tx-row').dataset.id;
+      if (!confirm('Xoá giao dịch này?')) return;
+      try {
+        await deleteTransaction(monthKey, id);
+        load();
+      } catch (err) {
+        showError(err);
+      }
     });
+  });
+}
+
+async function load() {
+  document.getElementById('month-label').textContent = monthLabel(monthKey);
+  document.getElementById('loading').style.display = 'block';
+  document.getElementById('tx-list').innerHTML = '';
+  try {
+    const [catResult, txResult] = await Promise.all([loadCategories(), loadTransactions(monthKey)]);
+    categories = catResult.categories;
+    transactions = txResult.transactions;
+    populateFilterOptions();
+    document.getElementById('loading').style.display = 'none';
+    renderList();
   } catch (err) {
     document.getElementById('loading').style.display = 'none';
     showError(err);
   }
 }
 
-document.getElementById('prev-month').addEventListener('click', () => { monthKey = shiftMonthKey(monthKey, -1); render(); });
-document.getElementById('next-month').addEventListener('click', () => { monthKey = shiftMonthKey(monthKey, 1); render(); });
+[filterTypeEl, filterCategoryEl, filterPaymentEl, filterPriorityEl].forEach((el) => el.addEventListener('change', renderList));
+filterNoteEl.addEventListener('input', renderList);
+document.getElementById('filter-clear').addEventListener('click', () => {
+  filterTypeEl.value = '';
+  filterCategoryEl.value = '';
+  filterPaymentEl.value = '';
+  filterPriorityEl.value = '';
+  filterNoteEl.value = '';
+  renderList();
+});
+
+document.getElementById('prev-month').addEventListener('click', () => { monthKey = shiftMonthKey(monthKey, -1); load(); });
+document.getElementById('next-month').addEventListener('click', () => { monthKey = shiftMonthKey(monthKey, 1); load(); });
 
 (async () => {
   if (!(await requireToken())) return;
-  render();
+  load();
 })();

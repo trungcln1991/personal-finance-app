@@ -19,7 +19,22 @@
     <button id="next-month">›</button>
   </div>
 
+  <div class="tx-filters">
+    <select id="filter-type">
+      <option value="">Tất cả loại</option>
+      <option value="income">Thu</option>
+      <option value="expense">Chi</option>
+      <option value="transfer">Chuyển khoản</option>
+    </select>
+    <select id="filter-category"><option value="">Tất cả danh mục</option></select>
+    <select id="filter-payment"><option value="">Tất cả phương thức</option></select>
+    <select id="filter-priority"><option value="">Tất cả mức ưu tiên</option></select>
+    <input type="text" id="filter-note" placeholder="Tìm theo ghi chú…" />
+    <button id="filter-clear" class="btn btn-secondary">Xoá lọc</button>
+  </div>
+
   <div id="loading" class="muted">Đang tải…</div>
+  <p class="muted" id="filter-summary" style="display:none;"></p>
   <div class="tx-list" id="tx-list"></div>
 </main>
 <script type="module" src="js/transactions.js"></script>
