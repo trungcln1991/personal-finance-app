@@ -55,8 +55,16 @@ function renderList() {
   const hasActiveFilter = [filterTypeEl, filterCategoryEl, filterPaymentEl, filterPriorityEl].some((el) => el.value) || filterNoteEl.value.trim();
 
   if (hasActiveFilter) {
+    const totalIncome = filtered.filter((t) => t.type === 'income').reduce((s, t) => s + t.amount, 0);
+    const totalExpense = filtered.filter((t) => t.type === 'expense').reduce((s, t) => s + t.amount, 0);
+    const totalTransfer = filtered.filter((t) => t.type === 'transfer').reduce((s, t) => s + t.amount, 0);
+    const totalParts = [
+      totalIncome ? `Thu: ${formatVnd(totalIncome)}` : '',
+      totalExpense ? `Chi: ${formatVnd(totalExpense)}` : '',
+      totalTransfer ? `Chuyển khoản: ${formatVnd(totalTransfer)}` : '',
+    ].filter(Boolean);
     summaryEl.style.display = 'block';
-    summaryEl.textContent = `Đang lọc: ${filtered.length}/${transactions.length} giao dịch`;
+    summaryEl.textContent = `Đang lọc: ${filtered.length}/${transactions.length} giao dịch — ${totalParts.join(' · ')}`;
   } else {
     summaryEl.style.display = 'none';
   }
