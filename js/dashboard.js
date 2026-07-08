@@ -66,19 +66,6 @@ async function render(monthKey) {
     balanceEl.textContent = formatVnd(balance);
     balanceEl.className = 'value ' + (balance >= 0 ? 'income-value' : 'expense-value');
 
-    // Trong tổng Chi, tách phần đã thanh toán ngay (trừ tiền mặt/tài khoản)
-    // khỏi phần chưa thanh toán (ví trả sau/thẻ tín dụng — ghi nợ, trả sau).
-    const deferredExpense = expense
-      .filter((t) => {
-        const pm = categories.paymentMethods.find((p) => p.id === t.paymentMethod);
-        return pm && !paymentType(normalizePaymentMethod(pm).type).tracksBalance;
-      })
-      .reduce((s, t) => s + t.amount, 0);
-    const immediateExpense = totalExpense - deferredExpense;
-    document.getElementById('expense-breakdown').innerHTML = totalExpense
-      ? `<span>✅ Đã thanh toán ngay: ${formatVnd(immediateExpense)}</span><span>🕒 Chưa thanh toán (ví trả sau/thẻ tín dụng): ${formatVnd(deferredExpense)}</span>`
-      : '';
-
     // Số dư tiền mặt & tài khoản, chia theo chủ sở hữu
     const balanceGrid = document.getElementById('owner-balance-grid');
     const trackedAccounts = categories.paymentMethods.map(normalizePaymentMethod).filter((p) => paymentType(p.type).tracksBalance);
