@@ -72,14 +72,10 @@ async function render(monthKey) {
     const totalIncome = sum(income);
     const totalDeferred = sum(deferredExpense);
     const totalExpense = sum(paidNowExpense) + sum(debtPayments);
-    const balance = totalIncome - totalExpense;
 
     document.getElementById('total-income').textContent = formatVnd(totalIncome);
     document.getElementById('total-expense').textContent = formatVnd(totalExpense);
     document.getElementById('total-deferred').textContent = formatVnd(totalDeferred);
-    const balanceEl = document.getElementById('total-balance');
-    balanceEl.textContent = formatVnd(balance);
-    balanceEl.className = 'value ' + (balance >= 0 ? 'income-value' : 'expense-value');
 
     // Số dư tiền mặt & tài khoản, chia theo chủ sở hữu
     const balanceGrid = document.getElementById('owner-balance-grid');
@@ -92,14 +88,20 @@ async function render(monthKey) {
     const allTx = earliestDate ? await loadTransactionsRange(earliestDate.slice(0, 7)) : [];
     const accounts = computeAccountBalances(categories, allTx);
 
-    // Ô "Còn lại" chỉ tính trong phạm vi tháng, nên tự nó không bằng tiền đang có.
-    // Cộng thêm tiền dư mang sang từ các tháng trước mới ra số khớp với số dư tài khoản.
+    // "Còn lại" = tiền thật đang có: tự cộng tiền dư các tháng trước để lại, khỏi phải nhập tay
+    // số dư mỗi đầu tháng. Nhờ vậy nó luôn khớp với mục số dư tiền mặt & tài khoản bên dưới.
     const carryOver = computeAccountBalances(categories, allTx.filter((t) => t.date < `${monthKey}-01`))
       .reduce((s, a) => s + (a.balance || 0), 0);
-    document.getElementById('carry-line').innerHTML = `
-      <span>Mang sang từ tháng trước <b>${formatVnd(carryOver)}</b></span>
-      <span>+ còn lại tháng này <b>${formatVnd(balance)}</b></span>
-      <span class="carry-total">= <b>${formatVnd(carryOver + balance)}</b> tiền đang có</span>`;
+    const balance = carryOver + totalIncome - totalExpense;
+    const balanceEl = document.getElementById('total-balance');
+    balanceEl.textContent = formatVnd(balance);
+    balanceEl.className = 'value ' + (balance >= 0 ? 'income-value' : 'expense-value');
+
+    const carryLine = document.getElementById('carry-line');
+    carryLine.innerHTML = carryOver
+      ? `<span>Đã gồm <b>${formatVnd(carryOver)}</b> mang sang từ tháng trước</span>
+         <span>· riêng tháng này thu chi chênh <b>${formatVnd(totalIncome - totalExpense)}</b></span>`
+      : '';
     const ownerCards = OWNERS.map((o) => {
       const list = accounts.filter((a) => (a.owner || 'shared') === o.id);
       if (!list.length) return '';
