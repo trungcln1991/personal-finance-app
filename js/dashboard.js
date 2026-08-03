@@ -55,14 +55,28 @@ async function render(monthKey) {
       }
     }
 
+    const allMethods = categories.paymentMethods.map(normalizePaymentMethod);
+    const debtMethodIds = new Set(allMethods.filter((p) => !paymentType(p.type).tracksBalance).map((p) => p.id));
+
+    // Mục "Chi" tính theo tiền thật ra khỏi túi trong tháng:
+    //   chi trả ngay (tiền mặt/ngân hàng) + tiền trả nợ ví/thẻ của tháng trước.
+    // Còn chi bằng ví trả sau tháng này chưa tốn đồng nào — dồn sang ô "Nợ tháng sau".
+    // Nhờ vậy Thu − Chi khớp với tiền thật còn lại, và không tính trùng khi trả nợ.
     const income = transactions.filter((t) => t.type === 'income');
     const expense = transactions.filter((t) => t.type === 'expense');
-    const totalIncome = income.reduce((s, t) => s + t.amount, 0);
-    const totalExpense = expense.reduce((s, t) => s + t.amount, 0);
+    const deferredExpense = expense.filter((t) => debtMethodIds.has(t.paymentMethod));
+    const paidNowExpense = expense.filter((t) => !debtMethodIds.has(t.paymentMethod));
+    const debtPayments = transactions.filter((t) => t.type === 'transfer' && debtMethodIds.has(t.toPayment));
+
+    const sum = (list) => list.reduce((s, t) => s + t.amount, 0);
+    const totalIncome = sum(income);
+    const totalDeferred = sum(deferredExpense);
+    const totalExpense = sum(paidNowExpense) + sum(debtPayments);
     const balance = totalIncome - totalExpense;
 
     document.getElementById('total-income').textContent = formatVnd(totalIncome);
     document.getElementById('total-expense').textContent = formatVnd(totalExpense);
+    document.getElementById('total-deferred').textContent = formatVnd(totalDeferred);
     const balanceEl = document.getElementById('total-balance');
     balanceEl.textContent = formatVnd(balance);
     balanceEl.className = 'value ' + (balance >= 0 ? 'income-value' : 'expense-value');
@@ -70,7 +84,6 @@ async function render(monthKey) {
     // Số dư tiền mặt & tài khoản, chia theo chủ sở hữu
     const balanceGrid = document.getElementById('owner-balance-grid');
     // Số dư tài khoản và nợ ví/thẻ đều cần lịch sử giao dịch từ mốc cấu hình sớm nhất — load 1 lần dùng chung.
-    const allMethods = categories.paymentMethods.map(normalizePaymentMethod);
     const trackedAccounts = allMethods.filter((p) => paymentType(p.type).tracksBalance);
     const earliestDate = allMethods
       .flatMap((p) => [p.initialBalanceDate, p.openingDebtDate])
@@ -241,6 +254,37 @@ async function render(monthKey) {
             </div>`;
         })
         .join('');
+    }
+
+    // Các danh mục tiêu quá ngân sách — liệt kê riêng lên đầu, vượt nhiều nhất trước.
+    const overRows = rows
+      .map(([catId, cfg, active]) => ({
+        name: cfg.name || catId,
+        icon: categoryIcon(catId),
+        spent: byCategory[catId] || 0,
+        budgetAmount: active.monthlyAmount,
+        over: (byCategory[catId] || 0) - active.monthlyAmount,
+      }))
+      .filter((r) => r.over > 0)
+      .sort((a, b) => b.over - a.over);
+    const overCard = document.getElementById('over-budget-card');
+    if (!overRows.length) {
+      overCard.style.display = 'none';
+    } else {
+      overCard.style.display = 'block';
+      const totalOver = overRows.reduce((s, r) => s + r.over, 0);
+      document.getElementById('over-budget-list').innerHTML = `
+        ${overRows
+          .map(
+            (r) => `
+          <div class="over-row">
+            <span class="over-name">${r.icon} ${r.name}</span>
+            <span class="over-detail">${formatVnd(r.spent)} / ${formatVnd(r.budgetAmount)}</span>
+            <span class="over-amount">vượt ${formatVnd(r.over)}</span>
+          </div>`
+          )
+          .join('')}
+        <div class="over-total">Tổng vượt ${overRows.length} mục: ${formatVnd(totalOver)}</div>`;
     }
 
     document.getElementById('loading').style.display = 'none';

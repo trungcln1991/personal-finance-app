@@ -62,8 +62,12 @@ h2 { font-size: 1.05rem; margin: 22px 0 10px; color: var(--muted); font-weight: 
 
 .summary-grid {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(2, 1fr);
   gap: 10px;
+}
+
+@media (min-width: 560px) {
+  .summary-grid { grid-template-columns: repeat(4, 1fr); }
 }
 
 .summary-grid .card {
@@ -75,10 +79,29 @@ h2 { font-size: 1.05rem; margin: 22px 0 10px; color: var(--muted); font-weight: 
 .summary-grid .card:nth-child(1) { border-top-color: var(--green); }
 .summary-grid .card:nth-child(2) { border-top-color: var(--red); }
 .summary-grid .card:nth-child(3) { border-top-color: var(--accent); }
+.summary-grid .card:nth-child(4) { border-top-color: var(--amber); }
 .summary-grid .label { font-size: 0.75rem; color: var(--muted); }
 .summary-grid .value { font-size: 1.05rem; font-weight: 700; margin-top: 4px; }
 .income-value { color: var(--green); }
 .expense-value { color: var(--red); }
+.deferred-value { color: var(--amber); }
+
+/* Các danh mục tiêu quá ngân sách */
+.over-budget-card { border-left: 3px solid var(--red); }
+.over-budget-card h3 { font-size: 0.95rem; margin-bottom: 10px; }
+.over-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 8px;
+  padding: 7px 0;
+  border-bottom: 1px solid var(--surface-2);
+  font-size: 0.88rem;
+}
+.over-row .over-name { flex: 1 1 100%; font-weight: 600; }
+.over-row .over-detail { flex: 1; color: var(--muted); font-size: 0.8rem; }
+.over-row .over-amount { color: var(--red); font-weight: 700; white-space: nowrap; }
+.over-total { margin-top: 10px; font-weight: 700; color: var(--red); text-align: right; }
 
 .month-switcher {
   display: flex;
