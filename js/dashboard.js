@@ -91,6 +91,15 @@ async function render(monthKey) {
       .sort()[0];
     const allTx = earliestDate ? await loadTransactionsRange(earliestDate.slice(0, 7)) : [];
     const accounts = computeAccountBalances(categories, allTx);
+
+    // Ô "Còn lại" chỉ tính trong phạm vi tháng, nên tự nó không bằng tiền đang có.
+    // Cộng thêm tiền dư mang sang từ các tháng trước mới ra số khớp với số dư tài khoản.
+    const carryOver = computeAccountBalances(categories, allTx.filter((t) => t.date < `${monthKey}-01`))
+      .reduce((s, a) => s + (a.balance || 0), 0);
+    document.getElementById('carry-line').innerHTML = `
+      <span>Mang sang từ tháng trước <b>${formatVnd(carryOver)}</b></span>
+      <span>+ còn lại tháng này <b>${formatVnd(balance)}</b></span>
+      <span class="carry-total">= <b>${formatVnd(carryOver + balance)}</b> tiền đang có</span>`;
     const ownerCards = OWNERS.map((o) => {
       const list = accounts.filter((a) => (a.owner || 'shared') === o.id);
       if (!list.length) return '';
