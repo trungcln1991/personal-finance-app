@@ -2,7 +2,7 @@ import { renderNav, showError, clearError } from './nav.js';
 import { getToken, login, clearToken, testToken, hasToken } from './github-api.js';
 import {
   loadCategories, saveCategories, loadBudget, saveBudget, genId, formatNumber, formatVnd,
-  parseAmountInput, attachAmountInput, categoryIcon, currentMonthKey, previousMonthKey,
+  parseAmountInput, attachAmountInput, categoryIcon, currentMonthKey,
   PAYMENT_TYPES, OWNERS, paymentType, ownerLabel, normalizePaymentMethod,
   resolveVersioned, addVersionOverride, paymentMethodName,
 } from './store.js';
@@ -90,7 +90,7 @@ function renderPaymentList() {
       const t = paymentType(p.type);
       const sub = t.tracksBalance
         ? (p.initialBalanceDate ? `Số dư: ${formatVnd(p.initialBalance)} (từ ${p.initialBalanceDate})` : 'Chưa cấu hình số dư')
-        : (p.lastPaidMonth ? `${t.label} · Đã trả nợ đến hết ${p.lastPaidMonth}` : `${t.label} · Chưa cấu hình nợ`);
+        : (p.openingDebtDate ? `${t.label} · Nợ đầu kỳ: ${formatVnd(p.openingDebt)} (từ ${p.openingDebtDate})` : `${t.label} · Chưa cấu hình nợ`);
       const editing = editingPaymentId === p.id;
       return `
         <div class="category-manage-row payment-row" data-id="${p.id}">
@@ -126,9 +126,9 @@ function paymentEditPanelHtml(p) {
         <div class="field" style="flex:1;"><label>Số dư hiện có</label><input type="text" inputmode="numeric" class="pe-balance" value="${formatNumber(p.initialBalance)}" /></div>
         <div class="field" style="flex:1;"><label>Tính từ ngày</label><input type="date" class="pe-balance-date" value="${p.initialBalanceDate || ''}" /></div>
       </div>
-      <div class="field pe-debt-field" style="display:${t.tracksBalance ? 'none' : 'block'};">
-        <label>Đã thanh toán nợ đến hết tháng</label>
-        <input type="month" class="pe-last-paid-month" value="${p.lastPaidMonth || previousMonthKey(currentMonthKey())}" />
+      <div class="pe-debt-field" style="display:${t.tracksBalance ? 'none' : 'flex'};gap:8px;">
+        <div class="field" style="flex:1;"><label>Nợ đầu kỳ</label><input type="text" inputmode="numeric" class="pe-opening-debt" value="${formatNumber(p.openingDebt)}" /></div>
+        <div class="field" style="flex:1;"><label>Tính từ ngày</label><input type="date" class="pe-opening-debt-date" value="${p.openingDebtDate || ''}" /></div>
       </div>
       <div style="display:flex;gap:8px;">
         <button class="btn btn-primary pe-save">Lưu</button>
@@ -141,10 +141,11 @@ function wirePaymentEditPanel() {
   const panel = document.querySelector('#payment-list .payment-edit-panel');
   if (!panel) return;
   attachAmountInput(panel.querySelector('.pe-balance'));
+  attachAmountInput(panel.querySelector('.pe-opening-debt'));
   panel.querySelector('.pe-type').addEventListener('change', (e) => {
     const tracksBalance = paymentType(e.target.value).tracksBalance;
     panel.querySelector('.pe-balance-fields').style.display = tracksBalance ? 'flex' : 'none';
-    panel.querySelector('.pe-debt-field').style.display = tracksBalance ? 'none' : 'block';
+    panel.querySelector('.pe-debt-field').style.display = tracksBalance ? 'none' : 'flex';
   });
   panel.querySelector('.pe-save').addEventListener('click', async () => {
     const idx = categories.paymentMethods.findIndex((c) => c.id === editingPaymentId);
@@ -156,7 +157,9 @@ function wirePaymentEditPanel() {
       owner: panel.querySelector('.pe-owner').value,
       initialBalance: parseAmountInput(panel.querySelector('.pe-balance').value),
       initialBalanceDate: panel.querySelector('.pe-balance-date').value || null,
-      lastPaidMonth: panel.querySelector('.pe-last-paid-month').value || null,
+      openingDebt: parseAmountInput(panel.querySelector('.pe-opening-debt').value),
+      openingDebtDate: panel.querySelector('.pe-opening-debt-date').value || null,
+      lastPaidMonth: null,
     };
     try {
       await persistCategories();
@@ -212,11 +215,12 @@ const newPaymentOwnerEl = document.getElementById('new-payment-owner');
 newPaymentTypeEl.innerHTML = selectOptions(PAYMENT_TYPES, 'cash');
 newPaymentOwnerEl.innerHTML = selectOptions(OWNERS, 'shared');
 attachAmountInput(document.getElementById('new-payment-balance'));
+attachAmountInput(document.getElementById('new-payment-opening-debt'));
 newPaymentTypeEl.addEventListener('change', () => {
   const tracksBalance = paymentType(newPaymentTypeEl.value).tracksBalance;
   document.getElementById('new-payment-balance-fields').style.display = tracksBalance ? 'flex' : 'none';
-  document.getElementById('new-payment-debt-field').style.display = tracksBalance ? 'none' : 'block';
-  if (!tracksBalance) document.getElementById('new-payment-last-paid-month').value = previousMonthKey(currentMonthKey());
+  document.getElementById('new-payment-debt-field').style.display = tracksBalance ? 'none' : 'flex';
+  if (!tracksBalance) document.getElementById('new-payment-opening-debt-date').value = `${currentMonthKey()}-01`;
 });
 
 document.getElementById('add-payment').addEventListener('click', async () => {
@@ -224,21 +228,24 @@ document.getElementById('add-payment').addEventListener('click', async () => {
   const name = nameInput.value.trim();
   if (!name) return;
   const type = newPaymentTypeEl.value;
+  const tracksBalance = paymentType(type).tracksBalance;
   categories.paymentMethods.push({
     id: slugify(name) || genId(),
     name,
     type,
     owner: newPaymentOwnerEl.value,
-    initialBalance: paymentType(type).tracksBalance ? parseAmountInput(document.getElementById('new-payment-balance').value) : 0,
-    initialBalanceDate: paymentType(type).tracksBalance ? (document.getElementById('new-payment-balance-date').value || null) : null,
-    lastPaidMonth: paymentType(type).tracksBalance ? null : (document.getElementById('new-payment-last-paid-month').value || previousMonthKey(currentMonthKey())),
+    initialBalance: tracksBalance ? parseAmountInput(document.getElementById('new-payment-balance').value) : 0,
+    initialBalanceDate: tracksBalance ? (document.getElementById('new-payment-balance-date').value || null) : null,
+    openingDebt: tracksBalance ? 0 : parseAmountInput(document.getElementById('new-payment-opening-debt').value),
+    openingDebtDate: tracksBalance ? null : (document.getElementById('new-payment-opening-debt-date').value || `${currentMonthKey()}-01`),
   });
   try {
     await persistCategories();
     nameInput.value = '';
     document.getElementById('new-payment-balance').value = '';
     document.getElementById('new-payment-balance-date').value = '';
-    document.getElementById('new-payment-last-paid-month').value = '';
+    document.getElementById('new-payment-opening-debt').value = '';
+    document.getElementById('new-payment-opening-debt-date').value = '';
     renderPaymentList();
   } catch (err) { showError(err); }
 });

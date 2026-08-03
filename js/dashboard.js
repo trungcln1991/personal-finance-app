@@ -2,7 +2,8 @@ import { renderNav, requireToken, showError } from './nav.js';
 import {
   loadCategories, loadBudget, loadTransactions, saveTransactions, formatVnd, currentMonthKey, categoryName, categoryIcon,
   OWNERS, paymentType, normalizePaymentMethod, loadTransactionsRange, computeAccountBalances,
-  shiftMonthKey, computeDebtStatus, payDebt, addTransaction, genId, resolveVersioned,
+  shiftMonthKey, computeDebtStatus, addTransaction, genId, resolveVersioned,
+  formatNumber, parseAmountInput, attachAmountInput,
 } from './store.js';
 
 renderNav('dashboard');
@@ -20,7 +21,7 @@ async function render(monthKey) {
   document.getElementById('month-label').textContent = monthLabel(monthKey);
 
   try {
-    const [{ categories, sha: categoriesSha }, { budget }, { transactions, sha: txSha }] = await Promise.all([
+    const [{ categories }, { budget }, { transactions, sha: txSha }] = await Promise.all([
       loadCategories(),
       loadBudget(),
       loadTransactions(monthKey),
@@ -68,8 +69,13 @@ async function render(monthKey) {
 
     // Số dư tiền mặt & tài khoản, chia theo chủ sở hữu
     const balanceGrid = document.getElementById('owner-balance-grid');
-    const trackedAccounts = categories.paymentMethods.map(normalizePaymentMethod).filter((p) => paymentType(p.type).tracksBalance);
-    const earliestDate = trackedAccounts.filter((p) => p.initialBalanceDate).map((p) => p.initialBalanceDate).sort()[0];
+    // Số dư tài khoản và nợ ví/thẻ đều cần lịch sử giao dịch từ mốc cấu hình sớm nhất — load 1 lần dùng chung.
+    const allMethods = categories.paymentMethods.map(normalizePaymentMethod);
+    const trackedAccounts = allMethods.filter((p) => paymentType(p.type).tracksBalance);
+    const earliestDate = allMethods
+      .flatMap((p) => [p.initialBalanceDate, p.openingDebtDate])
+      .filter(Boolean)
+      .sort()[0];
     const allTx = earliestDate ? await loadTransactionsRange(earliestDate.slice(0, 7)) : [];
     const accounts = computeAccountBalances(categories, allTx);
     const ownerCards = OWNERS.map((o) => {
@@ -96,14 +102,12 @@ async function render(monthKey) {
 
     // Thẻ tín dụng & ví trả sau: nợ phải trả (tháng đã đóng) + phát sinh tháng này (chưa đến hạn)
     const cwCard = document.getElementById('credit-wallet-card');
-    const cwMethodsRaw = categories.paymentMethods.map(normalizePaymentMethod).filter((p) => !paymentType(p.type).tracksBalance);
+    const cwMethodsRaw = allMethods.filter((p) => !paymentType(p.type).tracksBalance);
     const todayMonthKey = currentMonthKey();
     if (!cwMethodsRaw.length) {
       cwCard.innerHTML = '<p class="muted">Chưa có thẻ tín dụng/ví trả sau nào. Vào Cài đặt để thêm.</p>';
     } else {
-      const earliestDebtMonth = cwMethodsRaw.filter((p) => p.lastPaidMonth).map((p) => p.lastPaidMonth).sort()[0];
-      const debtTx = earliestDebtMonth ? await loadTransactionsRange(earliestDebtMonth) : [];
-      const cwMethods = computeDebtStatus(categories, debtTx, todayMonthKey);
+      const cwMethods = computeDebtStatus(categories, allTx, todayMonthKey);
       const payAccounts = trackedAccounts;
       const cwRows = cwMethods
         .map((p) => {
@@ -111,14 +115,18 @@ async function render(monthKey) {
             ? '<p class="muted">Chưa cấu hình nợ — vào Cài đặt để thiết lập.</p>'
             : `
               <div class="cw-debt-rows">
-                <span class="owed">Nợ phải trả: ${formatVnd(p.owedAmount)}</span>
+                <span class="owed">Nợ đến hạn phải trả: ${formatVnd(p.dueAmount)}</span>
                 <span>Phát sinh tháng này (chưa đến hạn): ${formatVnd(p.currentMonthSpend)}</span>
+                <span>Tổng nợ: ${formatVnd(p.totalDebt)} · đã trả ${formatVnd(p.paidAmount)}</span>
               </div>`;
+          // Trả nợ = nhập đúng số tiền thực trả (mặc định điền sẵn phần đến hạn), cho phép trả một phần.
+          const suggested = p.dueAmount > 0 ? p.dueAmount : p.totalDebt;
           const payRow = p.canPay && payAccounts.length
             ? `
-              <div class="cw-pay-row" data-method="${p.id}" data-amount="${p.owedAmount}">
+              <div class="cw-pay-row" data-method="${p.id}">
+                <input type="text" inputmode="numeric" class="cw-pay-amount" value="${formatNumber(suggested)}" />
                 <select class="cw-pay-account">${payAccounts.map((a) => `<option value="${a.id}">${a.name}</option>`).join('')}</select>
-                <button class="cw-pay-btn">Đã trả nợ</button>
+                <button class="cw-pay-btn">Ghi nhận trả nợ</button>
               </div>`
             : '';
           return `
@@ -132,12 +140,20 @@ async function render(monthKey) {
       cwCard.innerHTML = cwRows;
 
       cwCard.querySelectorAll('.cw-pay-row').forEach((row) => {
+        const amountEl = row.querySelector('.cw-pay-amount');
+        attachAmountInput(amountEl);
         row.querySelector('.cw-pay-btn').addEventListener('click', async () => {
           const methodId = row.dataset.method;
-          const amount = Number(row.dataset.amount);
+          const amount = parseAmountInput(amountEl.value);
           const fromPayment = row.querySelector('.cw-pay-account').value;
           const method = cwMethods.find((m) => m.id === methodId);
-          if (!confirm(`Xác nhận đã trả ${formatVnd(amount)} nợ ${method?.name || ''}?`)) return;
+          if (!amount) {
+            alert('Nhập số tiền đã trả.');
+            return;
+          }
+          const remaining = method.totalDebt - amount;
+          const remainingNote = remaining > 0 ? `Còn nợ ${formatVnd(remaining)}.` : 'Hết nợ.';
+          if (!confirm(`Ghi nhận trả ${formatVnd(amount)} cho ${method?.name || ''}? ${remainingNote}`)) return;
           try {
             await addTransaction(todayMonthKey, {
               id: genId(),
@@ -148,7 +164,6 @@ async function render(monthKey) {
               amount,
               note: `Trả nợ ${method?.name || ''}`,
             });
-            await payDebt(categories, categoriesSha, methodId, todayMonthKey);
             render(monthKey);
           } catch (err) {
             showError(err);

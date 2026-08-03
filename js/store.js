@@ -188,9 +188,16 @@ export function ownerLabel(id) {
   return OWNERS.find((o) => o.id === id)?.label || 'Chung';
 }
 
-// Dữ liệu cũ (trước khi có type/owner) không có 2 trường này — mặc định tiền mặt, dùng chung.
+// Dữ liệu cũ (trước khi có type/owner) không có các trường này — mặc định tiền mặt, dùng chung.
+// lastPaidMonth là cách tính nợ cũ (đóng sổ theo mốc tháng), nay chỉ dùng để suy ra nợ đầu kỳ
+// cho dữ liệu chưa migrate: đã trả hết đến hết tháng X ⇒ nợ đầu kỳ = 0 kể từ ngày 01 tháng X+1.
 export function normalizePaymentMethod(p) {
-  return { type: 'cash', owner: 'shared', initialBalance: 0, initialBalanceDate: null, lastPaidMonth: null, ...p };
+  const base = { type: 'cash', owner: 'shared', initialBalance: 0, initialBalanceDate: null, openingDebt: 0, openingDebtDate: null, ...p };
+  if (!base.openingDebtDate && base.lastPaidMonth) {
+    base.openingDebt = 0;
+    base.openingDebtDate = `${shiftMonthKey(base.lastPaidMonth, 1)}-01`;
+  }
+  return base;
 }
 
 // Đọc toàn bộ giao dịch từ 1 tháng trở về sau (để cộng dồn số dư tài khoản).
@@ -224,32 +231,33 @@ export function computeAccountBalances(categories, allTx) {
     });
 }
 
-// Nợ phải trả cho thẻ tín dụng/ví trả sau: cộng dồn chi tiêu các tháng đã đóng (trước tháng hiện
-// tại) mà chưa đánh dấu trả, tách riêng phần phát sinh tháng hiện tại (chưa đến hạn thanh toán).
+// Nợ thẻ tín dụng/ví trả sau tính như sổ nợ (ledger), không đóng sổ theo mốc tháng:
+//   nợ = nợ đầu kỳ + mọi chi tiêu bằng phương thức đó − mọi khoản đã chuyển trả cho nó.
+// Nhờ vậy trả một phần vẫn đúng, và nhập bù giao dịch cũ không làm mất nợ.
+// Tách riêng phần phát sinh tháng hiện tại vì khoản này chưa tới hạn thanh toán.
+// Tiền đã trả trừ vào phần đến hạn trước; trả dư mới trừ tiếp sang tháng hiện tại.
 export function computeDebtStatus(categories, allTx, todayMonthKey) {
   return categories.paymentMethods
     .map(normalizePaymentMethod)
     .filter((p) => !paymentType(p.type).tracksBalance)
     .map((p) => {
-      if (!p.lastPaidMonth) return { ...p, configured: false, owedAmount: 0, currentMonthSpend: 0, canPay: false };
-      const spendByMonth = {};
-      for (const t of allTx) {
-        if (t.type !== 'expense' || t.paymentMethod !== p.id) continue;
-        const m = t.date.slice(0, 7);
-        spendByMonth[m] = (spendByMonth[m] || 0) + t.amount;
+      if (!p.openingDebtDate) {
+        return { ...p, configured: false, totalDebt: 0, dueAmount: 0, currentMonthSpend: 0, paidAmount: 0, canPay: false };
       }
-      const owedAmount = Object.entries(spendByMonth)
-        .filter(([m]) => m > p.lastPaidMonth && m < todayMonthKey)
-        .reduce((s, [, v]) => s + v, 0);
-      const currentMonthSpend = spendByMonth[todayMonthKey] || 0;
-      return { ...p, configured: true, owedAmount, currentMonthSpend, canPay: owedAmount > 0 };
+      let spendBefore = 0;
+      let currentMonthSpend = 0;
+      let paidAmount = 0;
+      for (const t of allTx) {
+        if (t.date < p.openingDebtDate) continue;
+        if (t.type === 'expense' && t.paymentMethod === p.id) {
+          if (t.date.slice(0, 7) === todayMonthKey) currentMonthSpend += t.amount;
+          else spendBefore += t.amount;
+        } else if (t.type === 'transfer' && t.toPayment === p.id) {
+          paidAmount += t.amount;
+        }
+      }
+      const totalDebt = p.openingDebt + spendBefore + currentMonthSpend - paidAmount;
+      const dueAmount = Math.max(0, p.openingDebt + spendBefore - paidAmount);
+      return { ...p, configured: true, totalDebt, dueAmount, currentMonthSpend, paidAmount, canPay: totalDebt > 0 };
     });
-}
-
-// Đánh dấu đã trả hết nợ tính đến trước tháng hiện tại (reset mốc, nợ cộng dồn lại từ tháng này).
-export async function payDebt(categories, categoriesSha, methodId, todayMonthKey) {
-  const idx = categories.paymentMethods.findIndex((p) => p.id === methodId);
-  if (idx === -1) throw new Error('Không tìm thấy phương thức thanh toán.');
-  categories.paymentMethods[idx] = { ...categories.paymentMethods[idx], lastPaidMonth: previousMonthKey(todayMonthKey) };
-  return saveCategories(categories, categoriesSha);
 }
