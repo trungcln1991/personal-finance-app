@@ -1,0 +1,9 @@
+{
+  "enabledPlugins": {
+    "document-skills@anthropic-agent-skills": true,
+    "example-skills@anthropic-agent-skills": true,
+    "superpowers@superpowers-dev": true,
+    "humanizer@humanizer": true,
+    "ponytail@ponytail": true
+  }
+}
