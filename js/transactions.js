@@ -1,5 +1,5 @@
 import { renderNav, requireToken, showError } from './nav.js';
-import { loadCategories, loadTransactions, deleteTransaction, formatVnd, currentMonthKey, categoryName, categoryIcon, shiftMonthKey, paymentMethodName } from './store.js';
+import { loadCategories, loadTransactions, loadTransactionsRange, deleteTransaction, formatVnd, currentMonthKey, categoryName, categoryIcon, shiftMonthKey, paymentMethodName } from './store.js';
 
 renderNav('transactions');
 
@@ -18,6 +18,14 @@ const filterCategoryEl = document.getElementById('filter-category');
 const filterPaymentEl = document.getElementById('filter-payment');
 const filterPriorityEl = document.getElementById('filter-priority');
 const filterNoteEl = document.getElementById('filter-note');
+const filterFromEl = document.getElementById('filter-from');
+const filterToEl = document.getElementById('filter-to');
+
+// Có chọn khoảng ngày (Từ/Đến) thì chuyển sang "chế độ khoảng ngày": nạp toàn bộ giao dịch
+// từ tháng của "Từ ngày" trở đi (hoặc toàn bộ nếu chỉ chọn "Đến ngày"), thay vì chỉ 1 tháng.
+function isRangeMode() {
+  return Boolean(filterFromEl.value || filterToEl.value);
+}
 
 function populateFilterOptions() {
   const catOptions = [
@@ -37,6 +45,10 @@ function matchesFilters(t) {
   const payment = filterPaymentEl.value;
   const priority = filterPriorityEl.value;
   const note = filterNoteEl.value.trim().toLowerCase();
+  const from = filterFromEl.value;
+  const to = filterToEl.value;
+  if (from && t.date < from) return false;
+  if (to && t.date > to) return false;
   if (type && t.type !== type) return false;
   if (cat && t.category !== cat) return false;
   if (payment) {
@@ -52,16 +64,18 @@ function renderList() {
   const listEl = document.getElementById('tx-list');
   const summaryEl = document.getElementById('filter-summary');
   const filtered = transactions.filter(matchesFilters);
-  const hasActiveFilter = [filterTypeEl, filterCategoryEl, filterPaymentEl, filterPriorityEl].some((el) => el.value) || filterNoteEl.value.trim();
+  const hasActiveFilter = [filterTypeEl, filterCategoryEl, filterPaymentEl, filterPriorityEl, filterFromEl, filterToEl].some((el) => el.value) || filterNoteEl.value.trim();
 
   if (hasActiveFilter) {
     const totalIncome = filtered.filter((t) => t.type === 'income').reduce((s, t) => s + t.amount, 0);
     const totalExpense = filtered.filter((t) => t.type === 'expense').reduce((s, t) => s + t.amount, 0);
     const totalTransfer = filtered.filter((t) => t.type === 'transfer').reduce((s, t) => s + t.amount, 0);
+    const net = totalIncome - totalExpense;
     const totalParts = [
       totalIncome ? `Thu: ${formatVnd(totalIncome)}` : '',
       totalExpense ? `Chi: ${formatVnd(totalExpense)}` : '',
       totalTransfer ? `Chuyển khoản: ${formatVnd(totalTransfer)}` : '',
+      totalIncome || totalExpense ? `Chênh lệch: ${formatVnd(net)}` : '',
     ].filter(Boolean);
     summaryEl.style.display = 'block';
     summaryEl.textContent = `Đang lọc: ${filtered.length}/${transactions.length} giao dịch — ${totalParts.join(' · ')}`;
@@ -70,7 +84,7 @@ function renderList() {
   }
 
   if (!transactions.length) {
-    listEl.innerHTML = '<p class="muted">Chưa có giao dịch nào trong tháng này.</p>';
+    listEl.innerHTML = `<p class="muted">Chưa có giao dịch nào${isRangeMode() ? ' trong khoảng ngày đã chọn' : ' trong tháng này'}.</p>`;
     return;
   }
   if (!filtered.length) {
@@ -145,11 +159,28 @@ function renderList() {
 }
 
 async function load() {
-  document.getElementById('month-label').textContent = monthLabel(monthKey);
+  const rangeMode = isRangeMode();
+  const monthNav = document.getElementById('month-switcher');
+  const rangeLabelEl = document.getElementById('range-label');
+  if (rangeMode) {
+    const from = filterFromEl.value || 'trước tới nay';
+    const to = filterToEl.value || 'nay';
+    rangeLabelEl.textContent = `Đang xem khoảng ngày: ${from} → ${to}`;
+    rangeLabelEl.style.display = 'block';
+    monthNav.style.display = 'none';
+  } else {
+    document.getElementById('month-label').textContent = monthLabel(monthKey);
+    rangeLabelEl.style.display = 'none';
+    monthNav.style.display = '';
+  }
   document.getElementById('loading').style.display = 'block';
   document.getElementById('tx-list').innerHTML = '';
   try {
-    const [catResult, txResult] = await Promise.all([loadCategories(), loadTransactions(monthKey)]);
+    const fromMonthKey = filterFromEl.value ? filterFromEl.value.slice(0, 7) : undefined;
+    const [catResult, txResult] = await Promise.all([
+      loadCategories(),
+      rangeMode ? loadTransactionsRange(fromMonthKey).then((tx) => ({ transactions: tx })) : loadTransactions(monthKey),
+    ]);
     categories = catResult.categories;
     transactions = txResult.transactions;
     populateFilterOptions();
@@ -163,13 +194,18 @@ async function load() {
 
 [filterTypeEl, filterCategoryEl, filterPaymentEl, filterPriorityEl].forEach((el) => el.addEventListener('change', renderList));
 filterNoteEl.addEventListener('input', renderList);
+[filterFromEl, filterToEl].forEach((el) => el.addEventListener('change', load));
 document.getElementById('filter-clear').addEventListener('click', () => {
   filterTypeEl.value = '';
   filterCategoryEl.value = '';
   filterPaymentEl.value = '';
   filterPriorityEl.value = '';
   filterNoteEl.value = '';
-  renderList();
+  const wasRangeMode = isRangeMode();
+  filterFromEl.value = '';
+  filterToEl.value = '';
+  if (wasRangeMode) load();
+  else renderList();
 });
 
 document.getElementById('prev-month').addEventListener('click', () => { monthKey = shiftMonthKey(monthKey, -1); load(); });

@@ -88,9 +88,10 @@ function renderPaymentList() {
     .map((raw) => {
       const p = normalizePaymentMethod(raw);
       const t = paymentType(p.type);
+      const cycleLabel = p.statementDay && p.dueDay ? ` · Chốt ngày ${p.statementDay}, đến hạn ngày ${p.dueDay} tháng sau` : '';
       const sub = t.tracksBalance
         ? (p.initialBalanceDate ? `Số dư: ${formatVnd(p.initialBalance)} (từ ${p.initialBalanceDate})` : 'Chưa cấu hình số dư')
-        : (p.openingDebtDate ? `${t.label} · Nợ đầu kỳ: ${formatVnd(p.openingDebt)} (từ ${p.openingDebtDate})` : `${t.label} · Chưa cấu hình nợ`);
+        : (p.openingDebtDate ? `${t.label} · Nợ đầu kỳ: ${formatVnd(p.openingDebt)} (từ ${p.openingDebtDate})${cycleLabel}` : `${t.label} · Chưa cấu hình nợ`);
       const editing = editingPaymentId === p.id;
       return `
         <div class="category-manage-row payment-row" data-id="${p.id}">
@@ -130,6 +131,10 @@ function paymentEditPanelHtml(p) {
         <div class="field" style="flex:1;"><label>Nợ đầu kỳ</label><input type="text" inputmode="numeric" class="pe-opening-debt" value="${formatNumber(p.openingDebt)}" /></div>
         <div class="field" style="flex:1;"><label>Tính từ ngày</label><input type="date" class="pe-opening-debt-date" value="${p.openingDebtDate || ''}" /></div>
       </div>
+      <div class="pe-cycle-field" style="display:${t.tracksBalance ? 'none' : 'flex'};gap:8px;">
+        <div class="field" style="flex:1;"><label>Ngày chốt sao kê</label><input type="number" min="1" max="31" class="pe-statement-day" value="${p.statementDay || ''}" placeholder="VD: 14, cuối tháng ghi 31" /></div>
+        <div class="field" style="flex:1;"><label>Ngày đến hạn (tháng sau)</label><input type="number" min="1" max="31" class="pe-due-day" value="${p.dueDay || ''}" placeholder="VD: 5" /></div>
+      </div>
       <div style="display:flex;gap:8px;">
         <button class="btn btn-primary pe-save">Lưu</button>
         <button class="btn btn-danger pe-remove">Xoá</button>
@@ -146,6 +151,7 @@ function wirePaymentEditPanel() {
     const tracksBalance = paymentType(e.target.value).tracksBalance;
     panel.querySelector('.pe-balance-fields').style.display = tracksBalance ? 'flex' : 'none';
     panel.querySelector('.pe-debt-field').style.display = tracksBalance ? 'none' : 'flex';
+    panel.querySelector('.pe-cycle-field').style.display = tracksBalance ? 'none' : 'flex';
   });
   panel.querySelector('.pe-save').addEventListener('click', async () => {
     const idx = categories.paymentMethods.findIndex((c) => c.id === editingPaymentId);
@@ -159,6 +165,8 @@ function wirePaymentEditPanel() {
       initialBalanceDate: panel.querySelector('.pe-balance-date').value || null,
       openingDebt: parseAmountInput(panel.querySelector('.pe-opening-debt').value),
       openingDebtDate: panel.querySelector('.pe-opening-debt-date').value || null,
+      statementDay: Number(panel.querySelector('.pe-statement-day').value) || null,
+      dueDay: Number(panel.querySelector('.pe-due-day').value) || null,
       lastPaidMonth: null,
     };
     try {
@@ -220,6 +228,7 @@ newPaymentTypeEl.addEventListener('change', () => {
   const tracksBalance = paymentType(newPaymentTypeEl.value).tracksBalance;
   document.getElementById('new-payment-balance-fields').style.display = tracksBalance ? 'flex' : 'none';
   document.getElementById('new-payment-debt-field').style.display = tracksBalance ? 'none' : 'flex';
+  document.getElementById('new-payment-cycle-field').style.display = tracksBalance ? 'none' : 'flex';
   if (!tracksBalance) document.getElementById('new-payment-opening-debt-date').value = `${currentMonthKey()}-01`;
 });
 
@@ -238,6 +247,8 @@ document.getElementById('add-payment').addEventListener('click', async () => {
     initialBalanceDate: tracksBalance ? (document.getElementById('new-payment-balance-date').value || null) : null,
     openingDebt: tracksBalance ? 0 : parseAmountInput(document.getElementById('new-payment-opening-debt').value),
     openingDebtDate: tracksBalance ? null : (document.getElementById('new-payment-opening-debt-date').value || `${currentMonthKey()}-01`),
+    statementDay: tracksBalance ? null : (Number(document.getElementById('new-payment-statement-day').value) || null),
+    dueDay: tracksBalance ? null : (Number(document.getElementById('new-payment-due-day').value) || null),
   });
   try {
     await persistCategories();
@@ -246,6 +257,8 @@ document.getElementById('add-payment').addEventListener('click', async () => {
     document.getElementById('new-payment-balance-date').value = '';
     document.getElementById('new-payment-opening-debt').value = '';
     document.getElementById('new-payment-opening-debt-date').value = '';
+    document.getElementById('new-payment-statement-day').value = '';
+    document.getElementById('new-payment-due-day').value = '';
     renderPaymentList();
   } catch (err) { showError(err); }
 });

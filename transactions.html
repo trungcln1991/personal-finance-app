@@ -13,13 +13,18 @@
 <main>
   <h1>Giao dịch</h1>
 
-  <div class="month-switcher">
+  <div class="month-switcher" id="month-switcher">
     <button id="prev-month">‹</button>
     <strong id="month-label">—</strong>
     <button id="next-month">›</button>
   </div>
+  <p class="muted" id="range-label" style="display:none;"></p>
 
   <div class="tx-filters">
+    <div class="tx-date-range">
+      <label>Từ ngày <input type="date" id="filter-from" /></label>
+      <label>Đến ngày <input type="date" id="filter-to" /></label>
+    </div>
     <select id="filter-type">
       <option value="">Tất cả loại</option>
       <option value="income">Thu</option>

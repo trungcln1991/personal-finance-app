@@ -9,6 +9,19 @@ export function currentMonthKey() {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
 }
 
+// Ngày hôm nay dạng YYYY-MM-DD theo giờ LOCAL (không dùng toISOString để tránh lệch ngày
+// khi giờ VN đã sang ngày mới nhưng UTC còn ở ngày hôm trước).
+export function todayDateStr() {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+export function formatDateVn(dateStr) {
+  if (!dateStr) return '';
+  const [y, m, d] = dateStr.split('-');
+  return `${d}/${m}/${y}`;
+}
+
 export function shiftMonthKey(monthKey, delta) {
   const [y, m] = monthKey.split('-').map(Number);
   const d = new Date(y, m - 1 + delta, 1);
@@ -192,12 +205,57 @@ export function ownerLabel(id) {
 // lastPaidMonth là cách tính nợ cũ (đóng sổ theo mốc tháng), nay chỉ dùng để suy ra nợ đầu kỳ
 // cho dữ liệu chưa migrate: đã trả hết đến hết tháng X ⇒ nợ đầu kỳ = 0 kể từ ngày 01 tháng X+1.
 export function normalizePaymentMethod(p) {
-  const base = { type: 'cash', owner: 'shared', initialBalance: 0, initialBalanceDate: null, openingDebt: 0, openingDebtDate: null, ...p };
+  const base = {
+    type: 'cash', owner: 'shared', initialBalance: 0, initialBalanceDate: null,
+    openingDebt: 0, openingDebtDate: null, statementDay: null, dueDay: null, ...p,
+  };
   if (!base.openingDebtDate && base.lastPaidMonth) {
     base.openingDebt = 0;
     base.openingDebtDate = `${shiftMonthKey(base.lastPaidMonth, 1)}-01`;
   }
   return base;
+}
+
+// ---- Chu kỳ sao kê thẻ tín dụng / ví trả sau (statementDay = ngày chốt, dueDay = ngày đến hạn) ----
+// Quy ước: dueDay luôn rơi vào tháng NGAY SAU tháng chốt sao kê (đúng cách HSBC/Mono công bố).
+// statementDay/dueDay > số ngày thực của tháng đó sẽ tự co về ngày cuối tháng (dùng cho "chốt cuối
+// tháng" kiểu Mono — nhập statementDay=31, tháng nào cũng tự hiểu là ngày cuối cùng).
+
+function daysInMonth(year, month) {
+  return new Date(year, month, 0).getDate();
+}
+
+function resolveMonthDay(year, month, day) {
+  return Math.min(day, daysInMonth(year, month));
+}
+
+function toDateStr(year, month, day) {
+  return `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+}
+
+function addMonths(year, month, delta) {
+  const d = new Date(year, month - 1 + delta, 1);
+  return { year: d.getFullYear(), month: d.getMonth() + 1 };
+}
+
+// Trả về mốc chu kỳ sao kê GẦN NHẤT đã/đang chốt tính đến `todayStr`:
+// - lastCloseDate: ngày chốt sao kê gần nhất (đã qua hoặc đúng hôm nay)
+// - dueDate: hạn thanh toán cho kỳ vừa chốt đó (ngày dueDay của tháng kế tiếp tháng chốt)
+// - nextCloseDate: ngày chốt kế tiếp (kỳ đang mở, chưa tới)
+export function getStatementCycle(p, todayStr) {
+  const [ty, tm] = todayStr.split('-').map(Number);
+  const closeThisMonth = toDateStr(ty, tm, resolveMonthDay(ty, tm, p.statementDay));
+  let closeYear = ty, closeMonth = tm;
+  if (todayStr < closeThisMonth) {
+    const prev = addMonths(ty, tm, -1);
+    closeYear = prev.year; closeMonth = prev.month;
+  }
+  const lastCloseDate = toDateStr(closeYear, closeMonth, resolveMonthDay(closeYear, closeMonth, p.statementDay));
+  const dueMonth = addMonths(closeYear, closeMonth, 1);
+  const dueDate = toDateStr(dueMonth.year, dueMonth.month, resolveMonthDay(dueMonth.year, dueMonth.month, p.dueDay));
+  const nextClose = addMonths(closeYear, closeMonth, 1);
+  const nextCloseDate = toDateStr(nextClose.year, nextClose.month, resolveMonthDay(nextClose.year, nextClose.month, p.statementDay));
+  return { lastCloseDate, dueDate, nextCloseDate };
 }
 
 // Đọc toàn bộ giao dịch từ 1 tháng trở về sau (để cộng dồn số dư tài khoản).
@@ -234,30 +292,36 @@ export function computeAccountBalances(categories, allTx) {
 // Nợ thẻ tín dụng/ví trả sau tính như sổ nợ (ledger), không đóng sổ theo mốc tháng:
 //   nợ = nợ đầu kỳ + mọi chi tiêu bằng phương thức đó − mọi khoản đã chuyển trả cho nó.
 // Nhờ vậy trả một phần vẫn đúng, và nhập bù giao dịch cũ không làm mất nợ.
-// Tách riêng phần phát sinh tháng hiện tại vì khoản này chưa tới hạn thanh toán.
-// Tiền đã trả trừ vào phần đến hạn trước; trả dư mới trừ tiếp sang tháng hiện tại.
-export function computeDebtStatus(categories, allTx, todayMonthKey) {
+// Mốc tách "đã chốt sao kê, đến hạn" / "kỳ hiện tại, chưa chốt" ưu tiên dùng chu kỳ thật
+// (statementDay/dueDay, xem getStatementCycle) nếu đã cấu hình; nếu chưa cấu hình thì fallback
+// về cách cũ (chia theo tháng lịch) để không phá dữ liệu các phương thức chưa cập nhật.
+export function computeDebtStatus(categories, allTx, todayStr) {
+  const todayMonthKey = todayStr.slice(0, 7);
   return categories.paymentMethods
     .map(normalizePaymentMethod)
     .filter((p) => !paymentType(p.type).tracksBalance)
     .map((p) => {
       if (!p.openingDebtDate) {
-        return { ...p, configured: false, totalDebt: 0, dueAmount: 0, currentMonthSpend: 0, paidAmount: 0, canPay: false };
+        return { ...p, configured: false, totalDebt: 0, dueAmount: 0, currentMonthSpend: 0, paidAmount: 0, canPay: false, dueDate: null, isOverdue: false };
       }
+      const cycle = p.statementDay && p.dueDay ? getStatementCycle(p, todayStr) : null;
       let spendBefore = 0;
       let currentMonthSpend = 0;
       let paidAmount = 0;
       for (const t of allTx) {
         if (t.date < p.openingDebtDate) continue;
         if (t.type === 'expense' && t.paymentMethod === p.id) {
-          if (t.date.slice(0, 7) === todayMonthKey) currentMonthSpend += t.amount;
-          else spendBefore += t.amount;
+          const isBilled = cycle ? t.date <= cycle.lastCloseDate : t.date.slice(0, 7) !== todayMonthKey;
+          if (isBilled) spendBefore += t.amount;
+          else currentMonthSpend += t.amount;
         } else if (t.type === 'transfer' && t.toPayment === p.id) {
           paidAmount += t.amount;
         }
       }
       const totalDebt = p.openingDebt + spendBefore + currentMonthSpend - paidAmount;
       const dueAmount = Math.max(0, p.openingDebt + spendBefore - paidAmount);
-      return { ...p, configured: true, totalDebt, dueAmount, currentMonthSpend, paidAmount, canPay: totalDebt > 0 };
+      const dueDate = cycle ? cycle.dueDate : null;
+      const isOverdue = !!(dueDate && dueAmount > 0 && todayStr > dueDate);
+      return { ...p, configured: true, totalDebt, dueAmount, currentMonthSpend, paidAmount, canPay: totalDebt > 0, dueDate, isOverdue };
     });
 }

@@ -75,6 +75,10 @@
           <div class="field" style="flex:1;"><label>Nợ đầu kỳ</label><input type="text" inputmode="numeric" id="new-payment-opening-debt" placeholder="0" /></div>
           <div class="field" style="flex:1;"><label>Tính từ ngày</label><input type="date" id="new-payment-opening-debt-date" /></div>
         </div>
+        <div id="new-payment-cycle-field" style="display:none; gap:8px;">
+          <div class="field" style="flex:1;"><label>Ngày chốt sao kê</label><input type="number" min="1" max="31" id="new-payment-statement-day" placeholder="VD: 14, cuối tháng ghi 31" /></div>
+          <div class="field" style="flex:1;"><label>Ngày đến hạn (tháng sau)</label><input type="number" min="1" max="31" id="new-payment-due-day" placeholder="VD: 5" /></div>
+        </div>
       </div>
       <button id="add-payment" class="btn btn-secondary btn-block">Thêm phương thức</button>
     </div>

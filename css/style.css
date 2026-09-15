@@ -218,6 +218,16 @@ form { display: flex; flex-direction: column; gap: 12px; }
 }
 .tx-filters input[type="text"] { flex: 1; min-width: 140px; }
 .tx-filters button { padding: 8px 12px; font-size: 0.85rem; }
+.tx-date-range { display: flex; flex-wrap: wrap; gap: 10px; width: 100%; }
+.tx-date-range label { display: flex; flex-direction: column; gap: 4px; font-size: 0.78rem; color: var(--muted); flex: 1; min-width: 140px; }
+.tx-date-range input[type="date"] {
+  padding: 8px 10px;
+  border-radius: 10px;
+  border: 1px solid var(--surface-2);
+  background: var(--surface-2);
+  color: var(--text);
+  font-size: 0.85rem;
+}
 
 .tx-list { display: flex; flex-direction: column; gap: 8px; }
 .tx-row {
@@ -465,6 +475,7 @@ form { display: flex; flex-direction: column; gap: 12px; }
 }
 .cw-debt-rows { display: flex; flex-direction: column; gap: 2px; font-size: 0.83rem; color: var(--muted); margin: 4px 0 10px; }
 .cw-debt-rows .owed { color: var(--red); font-weight: 700; }
+.cw-debt-rows .owed.overdue { background: rgba(239,68,68,0.15); padding: 3px 6px; border-radius: 6px; display: inline-block; }
 .cw-pay-row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 6px 0 12px; }
 .cw-pay-row select,
 .cw-pay-row input { flex: 1; min-width: 110px; padding: 8px 10px; border-radius: 8px; border: 1px solid var(--surface-2); background: var(--surface-2); color: var(--text); font-size: 0.85rem; }

@@ -3,7 +3,7 @@ import {
   loadCategories, loadBudget, loadTransactions, saveTransactions, formatVnd, currentMonthKey, categoryName, categoryIcon,
   OWNERS, paymentType, normalizePaymentMethod, loadTransactionsRange, computeAccountBalances,
   shiftMonthKey, computeDebtStatus, addTransaction, genId, resolveVersioned,
-  formatNumber, parseAmountInput, attachAmountInput,
+  formatNumber, parseAmountInput, attachAmountInput, todayDateStr, formatDateVn,
 } from './store.js';
 
 renderNav('dashboard');
@@ -131,16 +131,18 @@ async function render(monthKey) {
     if (!cwMethodsRaw.length) {
       cwCard.innerHTML = '<p class="muted">Chưa có thẻ tín dụng/ví trả sau nào. Vào Cài đặt để thêm.</p>';
     } else {
-      const cwMethods = computeDebtStatus(categories, allTx, todayMonthKey);
+      const cwMethods = computeDebtStatus(categories, allTx, todayDateStr());
       const payAccounts = trackedAccounts;
       const cwRows = cwMethods
         .map((p) => {
+          const dueLabel = p.dueDate ? ` (hạn ${formatDateVn(p.dueDate)}${p.isOverdue ? ' — ĐÃ QUÁ HẠN' : ''})` : '';
+          const currentLabel = p.dueDate ? 'Phát sinh kỳ hiện tại (chưa chốt sao kê)' : 'Phát sinh tháng này (chưa đến hạn)';
           const debtInfo = !p.configured
             ? '<p class="muted">Chưa cấu hình nợ — vào Cài đặt để thiết lập.</p>'
             : `
               <div class="cw-debt-rows">
-                <span class="owed">Nợ đến hạn phải trả: ${formatVnd(p.dueAmount)}</span>
-                <span>Phát sinh tháng này (chưa đến hạn): ${formatVnd(p.currentMonthSpend)}</span>
+                <span class="owed${p.isOverdue ? ' overdue' : ''}">Nợ đến hạn phải trả: ${formatVnd(p.dueAmount)}${dueLabel}</span>
+                <span>${currentLabel}: ${formatVnd(p.currentMonthSpend)}</span>
                 <span>Tổng nợ: ${formatVnd(p.totalDebt)} · đã trả ${formatVnd(p.paidAmount)}</span>
               </div>`;
           // Trả nợ = nhập đúng số tiền thực trả (mặc định điền sẵn phần đến hạn), cho phép trả một phần.
