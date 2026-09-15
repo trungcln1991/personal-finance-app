@@ -63,6 +63,8 @@ function matchesFilters(t) {
 function renderList() {
   const listEl = document.getElementById('tx-list');
   const summaryEl = document.getElementById('filter-summary');
+  const summaryMetaEl = document.getElementById('filter-summary-meta');
+  const summaryGridEl = document.getElementById('filter-summary-grid');
   const filtered = transactions.filter(matchesFilters);
   const hasActiveFilter = [filterTypeEl, filterCategoryEl, filterPaymentEl, filterPriorityEl, filterFromEl, filterToEl].some((el) => el.value) || filterNoteEl.value.trim();
 
@@ -71,14 +73,24 @@ function renderList() {
     const totalExpense = filtered.filter((t) => t.type === 'expense').reduce((s, t) => s + t.amount, 0);
     const totalTransfer = filtered.filter((t) => t.type === 'transfer').reduce((s, t) => s + t.amount, 0);
     const net = totalIncome - totalExpense;
-    const totalParts = [
-      totalIncome ? `Thu: ${formatVnd(totalIncome)}` : '',
-      totalExpense ? `Chi: ${formatVnd(totalExpense)}` : '',
-      totalTransfer ? `Chuyển khoản: ${formatVnd(totalTransfer)}` : '',
-      totalIncome || totalExpense ? `Chênh lệch: ${formatVnd(net)}` : '',
+    const items = [
+      totalIncome ? { cls: 'income', icon: '💰', label: 'Thu', value: totalIncome } : null,
+      totalExpense ? { cls: 'expense', icon: '💸', label: 'Chi', value: totalExpense } : null,
+      totalTransfer ? { cls: 'transfer', icon: '🔁', label: 'Chuyển khoản', value: totalTransfer } : null,
+      totalIncome || totalExpense ? { cls: 'net', icon: '⚖️', label: 'Chênh lệch', value: net, signed: true } : null,
     ].filter(Boolean);
     summaryEl.style.display = 'block';
-    summaryEl.textContent = `Đang lọc: ${filtered.length}/${transactions.length} giao dịch — ${totalParts.join(' · ')}`;
+    summaryMetaEl.textContent = `Đang lọc: ${filtered.length}/${transactions.length} giao dịch`;
+    summaryGridEl.innerHTML = items
+      .map((it) => {
+        const netCls = it.signed ? (it.value >= 0 ? 'positive' : 'negative') : '';
+        return `
+          <div class="tx-summary-item ${it.cls}">
+            <span class="label">${it.icon} ${it.label}</span>
+            <span class="value ${netCls}">${it.signed && it.value >= 0 ? '+' : ''}${formatVnd(it.value)}</span>
+          </div>`;
+      })
+      .join('');
   } else {
     summaryEl.style.display = 'none';
   }

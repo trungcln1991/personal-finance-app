@@ -86,6 +86,23 @@ h2 { font-size: 1.05rem; margin: 22px 0 10px; color: var(--muted); font-weight: 
 .expense-value { color: var(--red); }
 .deferred-value { color: var(--amber); }
 
+/* Khối tổng theo bộ lọc ở trang Giao dịch — cùng ngôn ngữ thiết kế với .summary-grid trên Dashboard
+   (chữ to, màu theo ý nghĩa) thay vì dòng chữ xám nhỏ dễ bị bỏ sót. */
+.tx-summary-card { padding: 14px 16px 10px; border-top: 3px solid var(--accent); }
+.tx-summary-meta { font-size: 0.78rem; color: var(--muted); margin-bottom: 10px; }
+.tx-summary-grid { display: flex; flex-wrap: wrap; }
+.tx-summary-item { flex: 1 1 90px; text-align: center; padding: 2px 8px 10px; position: relative; }
+.tx-summary-item:not(:last-child)::after {
+  content: ''; position: absolute; right: 0; top: 6px; bottom: 12px; width: 1px; background: rgba(255,255,255,0.08);
+}
+.tx-summary-item .label { display: block; font-size: 0.72rem; color: var(--muted); margin-bottom: 4px; }
+.tx-summary-item .value { display: block; font-size: 1.2rem; font-weight: 800; letter-spacing: -0.01em; }
+.tx-summary-item.income .value { color: var(--green); }
+.tx-summary-item.expense .value { color: var(--red); }
+.tx-summary-item.transfer .value { color: var(--accent); }
+.tx-summary-item.net .value.positive { color: var(--green); }
+.tx-summary-item.net .value.negative { color: var(--red); }
+
 /* Dòng đối chiếu: tiền mang sang + còn lại tháng này = tiền đang có */
 .carry-line {
   display: flex;
