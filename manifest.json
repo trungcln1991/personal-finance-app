@@ -1,13 +1,22 @@
 {
-  "name": "Sổ Thu Chi Gia Đình",
-  "short_name": "ThuChi",
-  "description": "App quản lý tài chính cá nhân, dữ liệu lưu trên máy chủ riêng",
-  "start_url": "./index.html",
-  "scope": "./",
+  "id": "/",
+  "name": "Sổ Thu Chi",
+  "short_name": "Thu Chi",
+  "description": "Sổ thu chi gia đình — dữ liệu lưu trên máy chủ riêng",
+  "lang": "vi",
+  "start_url": "/index.html",
+  "scope": "/",
   "display": "standalone",
   "background_color": "#F5F6F8",
   "theme_color": "#0B7A6F",
   "icons": [
-    { "src": "icons/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "icons/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" },
+    { "src": "icons/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }
+  ],
+  "shortcuts": [
+    { "name": "Thêm giao dịch", "url": "/add.html", "icons": [{ "src": "icons/icon-192.png", "sizes": "192x192" }] },
+    { "name": "Giao dịch", "url": "/transactions.html" }
   ]
 }

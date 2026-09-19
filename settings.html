@@ -10,9 +10,17 @@
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:wght@400;500;600;700;800&display=swap" />
-<link rel="manifest" href="manifest.json" />
-<link rel="icon" href="icons/icon.svg" />
+<link rel="manifest" href="manifest.json" crossorigin="use-credentials" />
+<meta name="application-name" content="Sổ Thu Chi" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-title" content="Thu Chi" />
+<meta name="apple-mobile-web-app-status-bar-style" content="default" />
+<link rel="icon" href="icons/icon.svg" type="image/svg+xml" />
+<link rel="icon" href="icons/favicon-32.png" sizes="32x32" type="image/png" />
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png" />
 <link rel="stylesheet" href="css/style.css" />
+<script src="js/pwa-install.js" defer></script>
 </head>
 <body>
 <main style="max-width:820px">
@@ -23,6 +31,12 @@
     <div class="who"><span class="small muted">Đang đăng nhập</span><b id="acc-email">—</b>
       <span class="small muted">Xác thực bằng Cloudflare Access</span></div>
     <a class="btn btn-sm" id="logout-btn" href="/cdn-cgi/access/logout"><span data-ico="logout"></span>Đăng xuất</a>
+  </section>
+
+  <section class="card" style="margin-bottom:12px">
+    <div class="card-title"><h3>Cài app lên máy</h3></div>
+    <p class="small muted" style="margin:-4px 0 12px">Tạo icon trên màn hình máy tính, iPhone, iPad hay Android — mở 1 chạm như app thật, không cần mở trình duyệt gõ địa chỉ.</p>
+    <div data-pwa-install data-btn-class="btn btn-primary" data-installed-text="✓ Đang mở dưới dạng app đã cài"></div>
   </section>
 
   <section class="card" style="margin-bottom:12px">

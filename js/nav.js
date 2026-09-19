@@ -79,9 +79,11 @@ export function renderNav(active) {
     <a class="btn btn-primary side-add" href="add.html">${icon('plus')}Thêm giao dịch</a>
     ${NAV.map((it) => `<a href="${it.href}" class="side-link ${it.id === active ? 'active' : ''}">${icon(it.icon)}${it.label}</a>`).join('')}
     <div class="side-foot">
+      <div data-pwa-install data-btn-class="btn btn-sm btn-secondary btn-block"></div>
       <div class="side-user"><span class="avatar" id="side-avatar">·</span><div class="who"><span class="muted">Đang đăng nhập</span><b id="side-email">—</b></div></div>
     </div>`;
   document.body.prepend(side);
+  window.PWAInstall?.refresh();
 
   const tab = document.createElement('nav');
   tab.className = 'tabbar';

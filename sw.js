@@ -1,4 +1,4 @@
-const CACHE_NAME = 'thu-chi-shell-v15';
+const CACHE_NAME = 'thu-chi-shell-v16';
 const SHELL_FILES = [
   './',
   './index.html',
@@ -15,6 +15,9 @@ const SHELL_FILES = [
   './js/transactions.js',
   './js/settings.js',
   './js/ui.js',
+  './js/pwa-install.js',
+  './icons/icon-192.png',
+  './icons/apple-touch-icon.png',
   './js/ai.js',
   './js/ai-client.js',
   './ai.html',
