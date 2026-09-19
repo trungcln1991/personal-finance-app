@@ -56,6 +56,8 @@ def git(*args) -> str:
 
 def safe_path(rel: str) -> Path:
     p = (REPO / rel).resolve()
+    if any(seg.startswith("-") for seg in Path(rel).parts):
+        raise HTTPException(400, "Đường dẫn không hợp lệ")
     if REPO not in p.parents and p != REPO or ".git" in p.parts:
         raise HTTPException(400, "Đường dẫn không hợp lệ")
     return p
@@ -100,7 +102,7 @@ async def put_contents(path: str, request: Request):
             return JSONResponse({"message": "sha mismatch"}, status_code=409)
         p.parent.mkdir(parents=True, exist_ok=True)
         tmp = p.with_suffix(".tmp"); tmp.write_bytes(data); tmp.replace(p)
-        git("add", path)
+        git("add", "--", str(p.relative_to(REPO)))  # "--" tách đường dẫn khỏi tuỳ chọn git
         changed = subprocess.run(["git", "-C", str(REPO), "diff", "--cached", "--quiet"]).returncode != 0
         if changed: git("-c", "user.name=So Thu Chi (E5)", "-c", f"user.email={who if '@' in who else 'app@taichinh.local'}",
             "commit", "-q", "-m", str(body.get("message") or f"Cập nhật {path}"))
