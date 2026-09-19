@@ -1,15 +1,20 @@
-// Trợ lý AI hội thoại — nút nổi ở MỌI trang, nói chuyện bằng giọng nói hoặc gõ.
-// Làm được: TẠO / SỬA / XOÁ giao dịch và TRA CỨU. AI chỉ ĐỀ XUẤT (JSON), app hiện thẻ xác nhận;
-// chỉ khi người dùng nói "ok"/bấm Lưu thì APP mới ghi (cùng đường ghi như form → mỗi lần = 1 commit git).
-// Máy tính: cột phải, trang co lại vẫn thấy. Điện thoại: toàn màn hình. Hội thoại giữ khi chuyển trang.
+// Trợ lý AI — nút nổi ở MỌI trang, 2 chế độ:
+//  🎙 GIAO TIẾP: mic mở suốt, ngừng nói ~1,5s là tự gửi, AI đọc to rồi tự nghe tiếp; im lặng 8s → tự hỏi lại
+//     kèm thông tin đã có; 2 lần không đáp → tạm dừng. Nói "lưu/ok" là tự ghi; im lặng thì KHÔNG BAO GIỜ tự lưu.
+//  💬 CHAT: gõ (hoặc đọc chính tả vào ô), bấm Gửi; không đọc to.
+// Làm được: TẠO / SỬA / XOÁ giao dịch và TRA CỨU. AI chỉ ĐỀ XUẤT (JSON) → app kiểm dữ liệu + thẻ xác nhận
+// → chỉ khi người dùng đồng ý APP mới ghi (cùng đường ghi như form → mỗi lần = 1 commit git).
 import { aiCall, AI_AVAILABLE, md, esc, listen } from './ai-client.js';
+import { createVoiceLoop } from './voice.js';
 import {
   loadCategories, loadTransactions, addTransaction, updateTransaction, deleteTransaction, genId,
   formatVnd, formatDateVn, todayDateStr, currentMonthKey, shiftMonthKey,
 } from './store.js';
 
 const KEY = 'ai-drawer';
-const VOICE_KEY = 'ai-voice';
+const MODE_KEY = 'ai-mode';
+const SILENCE_REPROMPT_MS = 8000;
+const MAX_REPROMPTS = 2;
 const DEFAULT_CHIPS = ['Thêm giao dịch mới', 'Tháng này chi tiền chợ bao nhiêu?', 'Sửa giao dịch gần nhất', 'Xoá một giao dịch'];
 const I = {
   spark: '<path d="M12 3l1.8 4.9L19 9.7l-5.2 1.8L12 16.5l-1.8-5L5 9.7l5.2-1.8z"/><path d="M19 15l.8 2.2L22 18l-2.2.8L19 21l-.8-2.2L16 18l2.2-.8z"/>',
@@ -18,17 +23,20 @@ const I = {
   send: '<path d="M22 2 11 13M22 2l-7 20-4-9-9-4z"/>',
   trash: '<path d="M3 6h18M8 6V4h8v2M6 6l1 15h10l1-15"/>',
   pie: '<path d="M21 12A9 9 0 1 1 12 3v9z"/><path d="M15 3.5A9 9 0 0 1 20.5 9H15z"/>',
-  vol: '<path d="M11 5 6 9H3v6h3l5 4z"/><path d="M15.5 8.5a5 5 0 0 1 0 7M18.5 5.5a9 9 0 0 1 0 13"/>',
-  mute: '<path d="M11 5 6 9H3v6h3l5 4z"/><path d="m22 9-6 6M16 9l6 6"/>',
+  chat: '<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>',
+  wave: '<path d="M2 12h2M6 8v8M10 5v14M14 8v8M18 10v4M22 12h0"/>',
+  pause: '<rect x="6" y="5" width="4" height="14" rx="1"/><rect x="14" y="5" width="4" height="14" rx="1"/>',
 };
 const svg = (n) => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${I[n]}</svg>`;
 
 let state = load();
 let ctx = { page: '', label: '', chips: DEFAULT_CHIPS };
 let busy = false;
-let el, fab, cats = null;
-let voiceOn = (() => { try { return localStorage.getItem(VOICE_KEY) !== '0'; } catch { return true; } })();
-let handsFree = false;   // đang trong vòng hội thoại giọng nói: nói xong → tự nghe tiếp
+let el, fab, cats = null, voice = null;
+let mode = (() => { try { return localStorage.getItem(MODE_KEY) || 'voice'; } catch { return 'voice'; } })();
+let vState = 'idle';             // idle | listening | thinking | speaking | paused
+let silenceTimer = null, reprompts = 0;
+let lastAgent = null;            // câu trả lời AI gần nhất — để nhắc lại thông tin đã có khi người dùng im lặng
 
 function load() {
   const empty = { open: false, turns: [], left: null, pending: null };
@@ -42,33 +50,96 @@ export function setAiContext(page, label, chips) {
   if (el) drawHead(), drawChips();
 }
 
-// ── Giọng đọc (Web Speech) ──
+// ── Giọng đọc ──
 function viVoice() { return speechSynthesis.getVoices().find((v) => /^vi/i.test(v.lang)) || null; }
 function speak(text) {
   return new Promise((resolve) => {
-    if (!voiceOn || !('speechSynthesis' in window) || !text) return resolve();
+    if (mode !== 'voice' || !('speechSynthesis' in window) || !text) return resolve();
     speechSynthesis.cancel();
     const u = new SpeechSynthesisUtterance(String(text).replace(/[*_#`>|]/g, '').slice(0, 400));
     u.lang = 'vi-VN'; const v = viVoice(); if (v) u.voice = v;
     u.rate = 1.05;
-    u.onend = u.onerror = () => resolve();
+    let done = false; const fin = () => { if (!done) { done = true; resolve(); } };
+    u.onend = u.onerror = fin;
     speechSynthesis.speak(u);
-    setTimeout(resolve, 20000); // phòng trình duyệt không gọi onend
+    setTimeout(fin, 3000 + text.length * 90);   // phòng trình duyệt không gọi onend
   });
 }
 
-const YES = /^(có|co|ok|oke|okay|ừ|ừm|uh|đồng ý|dong y|lưu|luu|xoá|xóa|xoa|được|duoc|đúng|dung|chuẩn|xác nhận|xac nhan|yes|chắc chắn|làm đi)/i;
-const NO = /^(không|khong|ko|thôi|thoi|huỷ|hủy|huy|đừng|sai|no\b|chưa)/i;
-
-function listenTurn() {
-  if (!state.open) return;
-  listen((t, fin) => {
-    const input = $d('#aid-in'); input.value = t; autoGrow(input);
-    if (fin && t.trim()) handleUserText(t.trim(), true);
-  }, { btn: $d('#aid-mic'), onStatus: (t) => { $d('#aid-left').textContent = t; if (/Không nghe thấy|⚠/.test(t)) handsFree = false; } });
+// ── Vòng giao tiếp giọng nói ──
+function setV(s, note) {
+  vState = s;
+  if (!el) return;
+  const orb = $d('#aid-orb'), lbl = $d('#aid-vlabel');
+  orb.className = `aid-orb ${s}`;
+  orb.innerHTML = svg(s === 'listening' ? 'wave' : s === 'paused' || s === 'idle' ? 'mic' : s === 'speaking' ? 'spark' : 'spark');
+  lbl.textContent = note || {
+    idle: 'Chạm để bắt đầu nói', listening: 'Đang nghe… nói xong ngừng 1 chút là mình hiểu',
+    thinking: 'Đang nghĩ…', speaking: 'Đang nói…', paused: 'Đã tạm dừng — chạm để nói tiếp',
+  }[s];
+}
+async function say(text, { record = true } = {}) {
+  if (record) { state.turns.push({ role: 'assistant', content: text }); save(); draw(); }
+  if (mode !== 'voice') return;
+  voice?.mute(true); setV('speaking');
+  await speak(text);
+  await new Promise((r) => setTimeout(r, 350));   // chờ dư âm loa tắt hẳn rồi mới nghe
+  if (mode === 'voice' && state.open && voice?.active) { voice.mute(false); setV('listening'); armSilence(); }
+}
+function armSilence() {
+  clearTimeout(silenceTimer);
+  if (mode !== 'voice' || !state.open) return;
+  silenceTimer = setTimeout(onSilence, SILENCE_REPROMPT_MS);
+}
+async function onSilence() {
+  if (busy || vState !== 'listening') return;
+  if (reprompts >= MAX_REPROMPTS) {
+    voice?.stop(); setV('paused');
+    state.turns.push({ role: 'sys', content: 'Mình tạm dừng vì không nghe thấy gì. Chạm quả cầu để nói tiếp.' }); save(); draw();
+    return;
+  }
+  reprompts++;
+  await say(repromptText());
+}
+// Nhắc lại những gì đã có + hỏi cái còn thiếu — không tốn lượt AI
+function repromptText() {
+  if (state.pending) {
+    const c = state.turns[state.pending.idx];
+    const verb = c.action === 'delete' ? 'xoá' : 'lưu';
+    return `Mình đang chờ bạn xác nhận ${verb} ${cardSummary(c)}. Nói "${verb}" để ${verb}, hoặc "không" để sửa.`;
+  }
+  const d = lastAgent?.draft;
+  if (d && ['create', 'update'].includes(lastAgent.intent)) {
+    const known = [
+      d.amount ? `${formatVnd(d.amount)}` : '',
+      d.category ? catName(d.type, d.category) : '',
+      d.paymentMethod ? `trả bằng ${pmName(d.paymentMethod)}` : '',
+      d.date ? `ngày ${formatDateVn(d.date)}` : '',
+      d.note || '',
+    ].filter(Boolean).join(', ');
+    const q = (lastAgent.say || '').split(/(?<=[.!?])\s+/).filter((s) => s.includes('?')).pop() || 'Bạn bổ sung giúp mình nhé?';
+    return known ? `Mình đang có: ${known}. ${q}` : q;
+  }
+  return 'Bạn cần mình giúp gì? Ví dụ: thêm giao dịch, sửa, xoá, hoặc hỏi số liệu.';
+}
+function startVoice() {                 // PHẢI gọi trong thao tác bấm (cử chỉ người dùng)
+  if (!voice) {
+    voice = createVoiceLoop({
+      onUtterance: (t) => { clearTimeout(silenceTimer); reprompts = 0; $d('#aid-live').textContent = ''; handleUserText(t); },
+      onInterim: (t) => { clearTimeout(silenceTimer); $d('#aid-live').textContent = t; },
+      onState: (s, err) => {
+        if (s === 'error') { setV('paused', err === 'not-allowed' ? 'Chưa cho phép micro — bấm ổ khoá cạnh thanh địa chỉ để cho phép' : 'Micro lỗi: ' + err); }
+        else if (s === 'paused') setV('paused', 'Máy tạm tắt mic — chạm để nói tiếp');
+        else if (s === 'listening' && vState !== 'speaking' && vState !== 'thinking') setV('listening');
+      },
+    });
+    if (!voice) { setMode('chat'); state.turns.push({ role: 'sys', content: 'Trình duyệt này chưa hỗ trợ nhận giọng nói — dùng chế độ Chat.' }); draw(); return false; }
+  }
+  voice.start();
+  return true;
 }
 
-// ── Mở / đóng ──
+// ── Mở / đóng / đổi chế độ ──
 export function openAi(ask) {
   if (!el) return;
   state.open = true; save();
@@ -76,40 +147,49 @@ export function openAi(ask) {
   void el.offsetWidth; // ép vẽ trạng thái đóng trước để hiệu ứng trượt chạy (rAF bị hoãn khi tab chạy nền)
   el.classList.add('open'); document.body.classList.add('ai-open');
   fab.hidden = true;
-  draw();
-  if (ask) return handleUserText(ask, false);
-  // Mở bằng thao tác bấm → chào + tự nghe (vòng hội thoại giọng nói)
-  if (!state.turns.length && AI_AVAILABLE) {
-    const hi = `Chào ${greetName()}, mình giúp gì? Bạn có thể nói: thêm giao dịch, sửa, xoá, hoặc hỏi số liệu.`;
-    pushAssistant({ say: hi });
-    save(); draw();
-    handsFree = voiceOn;
-    speak(hi).then(() => { if (handsFree) listenTurn(); });
+  applyMode(); draw();
+  if (ask) return handleUserText(ask);
+  if (mode === 'voice' && AI_AVAILABLE) {
+    reprompts = 0;
+    if (startVoice()) {
+      voice.mute(true);
+      say(state.turns.length ? 'Mình nghe đây.' : `Chào ${greetName()}, mình giúp gì? Bạn có thể nói: thêm giao dịch, sửa, xoá, hoặc hỏi số liệu.`,
+        { record: !state.turns.length });
+    }
   } else setTimeout(() => $d('#aid-in')?.focus({ preventScroll: true }), 220);
 }
 export function closeAi() {
-  state.open = false; handsFree = false; save();
+  state.open = false; save();
+  clearTimeout(silenceTimer); voice?.stop(); setV('idle');
   if ('speechSynthesis' in window) speechSynthesis.cancel();
   el.classList.remove('open'); document.body.classList.remove('ai-open');
   fab.hidden = false;
   setTimeout(() => { if (!state.open) el.hidden = true; }, 220);
 }
 export const toggleAi = () => (state.open ? closeAi() : openAi());
+function setMode(m) {
+  mode = m; try { localStorage.setItem(MODE_KEY, m); } catch {}
+  applyMode();
+}
+function applyMode() {
+  el.classList.toggle('mode-voice', mode === 'voice');
+  el.classList.toggle('mode-chat', mode === 'chat');
+  el.querySelectorAll('[data-mode]').forEach((b) => b.classList.toggle('active', b.dataset.mode === mode));
+  if (mode === 'chat') { clearTimeout(silenceTimer); voice?.stop(); if ('speechSynthesis' in window) speechSynthesis.cancel(); setV('idle'); }
+}
 let me = '';
 fetch('/api/me').then((r) => (r.ok ? r.json() : null)).then((j) => { me = j?.email || ''; }).catch(() => {});
 const greetName = () => ({ 'trung.caolenam@gmail.com': 'Trung', 'lephuc1702@gmail.com': 'Phúc' }[me] || 'bạn');
 
 // ── Vẽ ──
 function drawHead() {
-  $d('#aid-ctx').textContent = ctx.label ? `Đang xem: ${ctx.label}` : 'Thêm · sửa · xoá · tra cứu bằng giọng nói';
-  if (state.left != null && !$d('#aid-left').textContent.startsWith('🔴')) $d('#aid-left').textContent = `Còn ${state.left} lượt hôm nay`;
-  $d('#aid-voice').innerHTML = svg(voiceOn ? 'vol' : 'mute');
-  $d('#aid-voice').title = voiceOn ? 'Đang bật đọc to — bấm để tắt' : 'Đang tắt đọc to — bấm để bật';
+  $d('#aid-ctx').textContent = ctx.label ? `Đang xem: ${ctx.label}` : 'Thêm · sửa · xoá · tra cứu';
+  if (state.left != null) $d('#aid-left').textContent = `Còn ${state.left} lượt hôm nay`;
 }
 function drawChips() {
   const box = $d('#aid-chips');
   box.innerHTML = ctx.chips.map((c) => `<button type="button" class="chip">${esc(c)}</button>`).join('');
-  box.querySelectorAll('.chip').forEach((b) => { b.onclick = () => handleUserText(b.textContent, false); });
+  box.querySelectorAll('.chip').forEach((b) => { b.onclick = () => handleUserText(b.textContent); });
 }
 function turnHtml(t, i) {
   if (t.role === 'user') return `<div class="ai-msg user">${esc(t.content)}</div>`;
@@ -126,21 +206,22 @@ function draw() {
   }
   body.innerHTML = (state.turns.length ? state.turns.map(turnHtml).join('')
     : `<div class="aid-empty"><div class="aid-hello">${svg('spark')}</div><b>Trợ lý tài chính</b>
-        <p>Nói hoặc gõ: "thêm giao dịch", "sửa khoản ăn trưa hôm qua thành 60 nghìn", "xoá khoản cà phê", "tháng này tiền chợ bao nhiêu?". Mọi thay đổi đều hỏi bạn trước khi lưu.</p></div>`)
+        <p>"Thêm khoản ăn phở 50 nghìn", "sửa khoản bò kho hôm qua thành 75 nghìn", "xoá khoản cà phê", "tháng này tiền chợ bao nhiêu?". Mọi thay đổi đều hỏi bạn trước khi lưu.</p></div>`)
     + (busy ? '<div class="ai-msg assistant muted"><span class="thinking">Đang nghĩ</span></div>' : '');
   body.querySelectorAll('[data-card-ok]').forEach((b) => { b.onclick = () => confirmPending(true); });
   body.querySelectorAll('[data-card-no]').forEach((b) => { b.onclick = () => confirmPending(false); });
   body.scrollTop = body.scrollHeight;
   $d('#aid-chips').hidden = busy || state.turns.length > 1;
 }
-function pushAssistant(a) {
-  state.turns.push({ role: 'assistant', content: a.say || '…', detail: a.detail || '' });
-}
 
 // ── Thẻ xác nhận ──
 const catName = (type, id) => (cats?.[type === 'income' ? 'income' : 'expense'] || []).find((c) => c.id === id)?.name || id || '—';
 const pmName = (id) => (cats?.paymentMethods || []).find((p) => p.id === id)?.name || (id || '—');
 const prName = (id) => (cats?.priorities || []).find((p) => p.id === id)?.name || '';
+function cardSummary(c) {
+  const t = c.action === 'delete' ? c.before : c.tx;
+  return `${t.type === 'income' ? 'khoản thu' : 'khoản chi'} ${formatVnd(t.amount)}${t.category ? ', ' + catName(t.type, t.category) : ''}${t.note ? ', ' + t.note : ''}`;
+}
 function txLines(t) {
   const isTr = t.type === 'transfer';
   return [
@@ -167,7 +248,8 @@ function cardHtml(c, i) {
   const st = { done: ' · ✓ xong', cancel: ' · đã huỷ', error: ' · lỗi' }[c.status] || '';
   return `<div class="aid-card ${c.action} ${c.status || ''}"><div class="aid-card-h">${title}${st}</div>
     <div class="detail-list">${rows}</div>
-    ${live ? `<div class="aid-card-a"><button type="button" class="btn btn-secondary btn-sm" data-card-no>Không</button>
+    ${live ? `<div class="aid-card-a"><span class="small muted">Nói "${c.action === 'delete' ? 'xoá' : 'lưu'}" hoặc "không"</span>
+      <button type="button" class="btn btn-secondary btn-sm" data-card-no>Không</button>
       <button type="button" class="btn ${c.action === 'delete' ? 'btn-danger' : 'btn-primary'} btn-sm" data-card-ok>${c.action === 'delete' ? 'Xoá' : 'Lưu'}</button></div>` : ''}</div>`;
 }
 
@@ -198,9 +280,7 @@ function normalize(d, base = {}) {
   if (!(out.amount > 0)) return { err: 'chưa rõ số tiền' };
   return { tx: out };
 }
-
 async function buildCard(a) {
-  cats ||= (await loadCategories()).categories;
   const d = a.draft || {};
   if (a.intent === 'create') {
     const r = normalize(d);
@@ -218,10 +298,10 @@ async function buildCard(a) {
 async function confirmPending(yes) {
   const p = state.pending; if (!p || busy) return;
   const card = state.turns[p.idx];
-  state.pending = null;
+  state.pending = null; clearTimeout(silenceTimer);
   if (!yes) {
     card.status = 'cancel'; save(); draw();
-    return handleUserText('Không, chưa đúng. Hỏi mình cần sửa gì.', false, true);
+    return handleUserText('Không, chưa đúng. Hỏi mình cần sửa gì.', true);
   }
   try {
     if (card.action === 'create') await addTransaction(card.tx.date.slice(0, 7), { id: genId(), ...card.tx });
@@ -230,13 +310,9 @@ async function confirmPending(yes) {
       await deleteTransaction(card.month, card.id);
       await addTransaction(card.tx.date.slice(0, 7), { ...card.before, ...card.tx, id: card.id });
     } else await updateTransaction(card.month, card.id, card.tx);
-    card.status = 'done';
-    const msg = { create: 'Đã lưu.', update: 'Đã cập nhật.', delete: 'Đã xoá.' }[card.action] + ' Còn gì nữa không?';
-    state.turns.push({ role: 'assistant', content: msg });
-    save(); draw();
+    card.status = 'done'; lastAgent = null;
     window.dispatchEvent(new CustomEvent('finance:changed'));   // trang đang mở tự tải lại số liệu
-    await speak(msg);
-    if (handsFree) listenTurn();
+    await say({ create: 'Đã lưu.', update: 'Đã cập nhật.', delete: 'Đã xoá.' }[card.action] + ' Còn gì nữa không?');
   } catch (e) {
     card.status = 'error';
     state.turns.push({ role: 'sys', content: '⚠ Không lưu được: ' + e.message });
@@ -245,43 +321,46 @@ async function confirmPending(yes) {
 }
 
 // ── Một lượt hội thoại ──
-async function handleUserText(text, fromVoice, silentUser = false) {
+const YES = /^(có|co|ok|oke|okay|ừ|ừm|uh|đồng ý|dong y|lưu|luu|xoá|xóa|xoa|được|duoc|đúng|chuẩn|xác nhận|xac nhan|yes|chắc chắn|làm đi)/i;
+const NO = /^(không|khong|ko|thôi|thoi|huỷ|hủy|huy|đừng|sai|no\b|chưa)/i;
+async function handleUserText(text, hidden = false) {
   text = (text || '').trim();
   if (busy || !text || !AI_AVAILABLE) return;
-  if (fromVoice) handsFree = true;
+  clearTimeout(silenceTimer);
   const input = $d('#aid-in'); input.value = ''; autoGrow(input);
-  // Đang chờ xác nhận: câu ngắn có/không thì xử lý luôn, không cần hỏi AI
-  if (state.pending && !silentUser) {
+  // Đang chờ xác nhận: câu ngắn có/không → xử lý luôn (không tốn lượt AI)
+  if (state.pending && !hidden) {
     const short = text.split(/\s+/).length <= 4;
     if (short && NO.test(text)) { state.turns.push({ role: 'user', content: text }); return confirmPending(false); }
     if (short && YES.test(text)) { state.turns.push({ role: 'user', content: text }); return confirmPending(true); }
     state.turns[state.pending.idx].status = 'cancel'; state.pending = null;   // nói điều khác = muốn sửa → bỏ thẻ cũ
   }
-  if (!silentUser) state.turns.push({ role: 'user', content: text });
-  busy = true; save(); draw();
-  const history = state.turns.filter((t) => t.role === 'user' || t.role === 'assistant')
-    .map((t) => ({ role: t.role, content: t.content }));
-  if (!silentUser) history.pop();   // câu vừa nói gửi riêng ở "text"
+  if (!hidden) state.turns.push({ role: 'user', content: text });
+  busy = true; voice?.mute(true); if (mode === 'voice') setV('thinking');
+  save(); draw();
+  cats ||= (await loadCategories().catch(() => ({ categories: null }))).categories;
+  const history = state.turns.filter((t) => t.role === 'user' || t.role === 'assistant').map((t) => ({ role: t.role, content: t.content }));
+  if (!hidden) history.pop();   // câu vừa nói gửi riêng ở "text"
   let a;
   try {
     const r = await aiCall({ mode: 'agent', text, history, page: ctx.page });
     a = r.agent || { say: '…' }; state.left = r.left;
   } catch (e) { a = { say: 'Lỗi: ' + e.message, intent: 'chat' }; }
-  busy = false;
-  pushAssistant(a);
-  if (a.ready && ['create', 'update', 'delete'].includes(a.intent)) {
+  busy = false; lastAgent = a;
+  state.turns.push({ role: 'assistant', content: a.say || '…', detail: a.detail || '' });
+  let spoken = a.say;
+  if (a.ready && ['create', 'update', 'delete'].includes(a.intent) && cats) {
     const card = await buildCard(a).catch((e) => ({ err: e.message }));
     if (card?.err) {
-      const q = `Mình ${card.err} — bạn nói rõ giúp mình nhé.`;
-      state.turns.push({ role: 'assistant', content: q }); a.say = q;
+      spoken = `Mình ${card.err} — bạn nói rõ giúp mình nhé.`;
+      state.turns.push({ role: 'assistant', content: spoken });
     } else if (card) {
       state.turns.push(card);
       state.pending = { idx: state.turns.length - 1 };
     }
   }
   save(); draw();
-  await speak(a.say);
-  if (handsFree && state.open) listenTurn();
+  await say(spoken, { record: false });
 }
 
 function autoGrow(t) { t.style.height = 'auto'; t.style.height = Math.min(t.scrollHeight, 140) + 'px'; }
@@ -299,49 +378,74 @@ export function initAiDrawer() {
     <header class="aid-head">
       <span class="aid-badge">${svg('spark')}</span>
       <div class="aid-title"><b>Trợ lý AI</b><span id="aid-ctx"></span></div>
-      <button type="button" class="icon-btn" id="aid-voice" aria-label="Bật/tắt đọc to"></button>
       <button type="button" class="icon-btn" id="aid-review" title="Nhận xét tháng này" aria-label="Nhận xét tháng này">${svg('pie')}</button>
       <button type="button" class="icon-btn" id="aid-clear" title="Cuộc trò chuyện mới" aria-label="Cuộc trò chuyện mới">${svg('trash')}</button>
       <button type="button" class="icon-btn" id="aid-close" aria-label="Đóng trợ lý">${svg('x')}</button>
     </header>
+    <div class="aid-modes segmented" role="tablist" aria-label="Chế độ">
+      <button type="button" data-mode="voice" role="tab">🎙 Giao tiếp</button>
+      <button type="button" data-mode="chat" role="tab">💬 Chat</button>
+    </div>
     <div class="aid-body" id="aid-body"></div>
     <div class="aid-chips" id="aid-chips"></div>
+    <div class="aid-voice">
+      <button type="button" class="aid-orb idle" id="aid-orb" aria-label="Bắt đầu / tạm dừng nói"></button>
+      <div class="aid-vlabel" id="aid-vlabel"></div>
+      <div class="aid-live" id="aid-live" aria-live="polite"></div>
+    </div>
     <form class="aid-form" id="aid-form">
-      <textarea id="aid-in" rows="1" placeholder="Nói hoặc gõ: thêm, sửa, xoá, hỏi…" aria-label="Câu nói"></textarea>
-      <button type="button" class="icon-btn aid-mic" id="aid-mic" aria-label="Nói" aria-pressed="false">${svg('mic')}</button>
+      <textarea id="aid-in" rows="1" placeholder="Gõ: thêm, sửa, xoá, hỏi…" aria-label="Câu hỏi"></textarea>
+      <button type="button" class="icon-btn" id="aid-mic" aria-label="Đọc chính tả" aria-pressed="false">${svg('mic')}</button>
       <button class="aid-send" aria-label="Gửi">${svg('send')}</button>
     </form>
-    <div class="aid-foot small muted"><span id="aid-left"></span><span>Enter gửi · Esc đóng · ⌘/Ctrl+J mở</span></div>`;
+    <div class="aid-foot small muted"><span id="aid-left"></span><span>Esc đóng · ⌘/Ctrl+J mở</span></div>`;
   document.body.append(el, fab);
 
   const input = $d('#aid-in');
   $d('#aid-close').onclick = closeAi;
-  $d('#aid-clear').onclick = () => { if (busy) return; state.turns = []; state.pending = null; handsFree = false; save(); openAi(); };
+  $d('#aid-clear').onclick = () => {
+    if (busy) return;
+    state.turns = []; state.pending = null; lastAgent = null; reprompts = 0; save(); draw();
+    if (mode === 'voice') { startVoice(); voice?.mute(true); say(`Chào ${greetName()}, mình giúp gì?`); }
+  };
   $d('#aid-review').onclick = async () => {
     if (busy) return;
+    clearTimeout(silenceTimer); voice?.mute(true);
     state.turns.push({ role: 'user', content: '📊 Nhận xét tháng này' }); busy = true; save(); draw();
     try { const r = await aiCall({ mode: 'review', text: '' }); state.turns.push({ role: 'assistant', content: r.text }); state.left = r.left; }
     catch (e) { state.turns.push({ role: 'sys', content: '⚠ ' + e.message }); }
     busy = false; save(); draw();
+    if (mode === 'voice' && voice?.active) await say('Mình đã viết nhận xét tháng này ở trên. Bạn muốn làm gì tiếp?', { record: false });
   };
-  $d('#aid-voice').onclick = () => {
-    voiceOn = !voiceOn; try { localStorage.setItem(VOICE_KEY, voiceOn ? '1' : '0'); } catch {}
-    if (!voiceOn && 'speechSynthesis' in window) speechSynthesis.cancel();
-    drawHead();
+  el.querySelectorAll('[data-mode]').forEach((b) => {
+    b.onclick = () => {
+      if (b.dataset.mode === mode) return;
+      setMode(b.dataset.mode);
+      if (mode === 'voice' && startVoice()) { voice.mute(true); say('Mình nghe đây.', { record: false }); }
+      else setTimeout(() => input.focus(), 50);
+    };
+  });
+  $d('#aid-orb').onclick = () => {        // chạm quả cầu: đang nghe → tạm dừng; đang dừng → nghe tiếp
+    if (vState === 'listening') { clearTimeout(silenceTimer); voice?.stop(); setV('paused', 'Đã tạm dừng — chạm để nói tiếp'); return; }
+    if (vState === 'speaking') { speechSynthesis.cancel(); return; }   // chạm khi đang nói = cắt lời
+    reprompts = 0;
+    if (startVoice()) { voice.mute(false); setV('listening'); armSilence(); }
   };
-  const sendTyped = () => { handsFree = false; handleUserText(input.value, false); };
+  const sendTyped = () => handleUserText(input.value);
   $d('#aid-form').onsubmit = (e) => { e.preventDefault(); sendTyped(); };
   input.addEventListener('input', () => autoGrow(input));
   input.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); sendTyped(); } });
-  $d('#aid-mic').onclick = () => { if ('speechSynthesis' in window) speechSynthesis.cancel(); handsFree = true; listenTurn(); };
+  $d('#aid-mic').onclick = () => listen((t) => { input.value = t; autoGrow(input); },
+    { btn: $d('#aid-mic'), onStatus: (t) => { $d('#aid-left').textContent = t; } });
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape' && state.open && !document.querySelector('.sheet.open, .pwa-bd')) closeAi();
     if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'j') { e.preventDefault(); toggleAi(); }
   });
-  drawChips();
+  drawChips(); applyMode(); setV('idle');
   if (new URLSearchParams(location.search).get('ai') === '1') state.open = true;
-  if (state.open) {
+  if (state.open) {   // mở sẵn từ trang trước: chưa có cử chỉ → chưa bật mic, chạm quả cầu để nói tiếp
     el.hidden = false; el.classList.add('open', 'no-anim'); document.body.classList.add('ai-open'); fab.hidden = true; draw();
+    if (mode === 'voice') setV('paused', 'Chạm quả cầu để nói tiếp');
     setTimeout(() => el.classList.remove('no-anim'), 50);
   }
 }
