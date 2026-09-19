@@ -2,6 +2,7 @@ import { renderNav, requireToken, showError, clearError, icon, toast } from './n
 import { loadCategories, loadTransactions, addTransaction, updateTransaction, deleteTransaction, genId, formatNumber, parseAmountInput, attachAmountInput, categoryIcon, todayDateStr, currentMonthKey } from './store.js';
 import { aiCall, AI_AVAILABLE, listen as aiListen, esc } from './ai-client.js';
 import { hydrateIcons } from './ui.js';
+import { setAiContext } from './ai-drawer.js';
 
 renderNav('add');
 hydrateIcons();
@@ -216,7 +217,8 @@ $('delete-btn').addEventListener('click', async () => {
   } catch (err) { showError(err); }
 });
 
-init().catch(showError);
+init().then(() => setAiContext('Trang Thêm/Sửa giao dịch (form nhập tay). Người dùng có thể hỏi nên xếp khoản chi vào danh mục nào, mức độ cần thiết, hoặc có nên chi không.',
+  'Thêm giao dịch', ['Khoản này nên xếp danh mục nào?', 'Tháng này còn bao nhiêu ngân sách ăn uống?', 'Mua món này có vượt ngân sách không?'])).catch(showError);
 
 // ── Nhập nhanh bằng câu nói: AI điền sẵn form, người dùng xem lại rồi tự bấm Lưu ──
 {

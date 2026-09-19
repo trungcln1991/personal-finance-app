@@ -7,6 +7,7 @@ import {
 } from './store.js';
 import { esc } from './ai-client.js';
 import { txRowHtml, openTxDetail, hydrateIcons } from './ui.js';
+import { setAiContext } from './ai-drawer.js';
 
 renderNav('dashboard');
 hydrateIcons();
@@ -225,6 +226,21 @@ async function render(monthKey) {
     $('recent').querySelectorAll('.tx-item').forEach((el) => {
       el.onclick = () => openTxDetail(transactions.find((t) => t.id === el.dataset.id), categories, () => render(monthKey));
     });
+
+    // Cho trợ lý AI biết màn hình đang hiện gì (hỏi "khoản này", "tháng này" là hiểu)
+    setAiContext([
+      `Trang Tổng quan, ${monthLabel(monthKey)}.`,
+      `Thu ${formatVnd(cur.income)}, Chi (tiền thật ra khỏi túi) ${formatVnd(cur.out)}, Còn lại ${formatVnd(balance)}, Nợ tháng sau ${formatVnd(cur.deferred)}.`,
+      `Tiền đang có ${formatVnd(cashNow)}, nợ thẻ/ví ${formatVnd(debtNow)}, tài sản ròng ${formatVnd(cashNow - debtNow)}.`,
+      overRows.length ? `Vượt ngân sách: ${overRows.map((r) => `${r.name} +${formatVnd(r.over)}`).join(', ')}.` : 'Không mục nào vượt ngân sách.',
+      `Dòng tiền 6 tháng: ${flows.map((f) => `${shortMonth(f.mk)} thu ${formatVnd(f.income)}/chi ${formatVnd(f.out)}`).join('; ')}.`,
+      debts.filter((d) => d.configured).map((d) => `${d.name}: nợ ${formatVnd(d.totalDebt)}, đến hạn ${formatVnd(d.dueAmount)}${d.dueDate ? ' hạn ' + formatDateVn(d.dueDate) : ''}`).join('; '),
+    ].filter(Boolean).join(' '), `Tổng quan ${monthLabel(monthKey)}`, [
+      `Vì sao ${monthLabel(monthKey).toLowerCase()} chi nhiều hơn tháng trước?`,
+      overRows.length ? `Cắt ${overRows[0].name.toLowerCase()} thế nào cho hợp lý?` : 'Tháng này có dư được bao nhiêu?',
+      'Nên trả nợ thẻ bao nhiêu để không mất phí?',
+      cashNow - debtNow < 0 ? 'Tài sản ròng đang âm — làm sao để về dương?' : 'Nên để dành bao nhiêu mỗi tháng?',
+    ]);
 
     $('loading').hidden = true;
     $('content').hidden = false;

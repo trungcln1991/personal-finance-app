@@ -1,6 +1,7 @@
 import { renderNav, showError, clearError, toast, getMe, getTheme, setTheme, isPrivate, setPrivate } from './nav.js';
 import { IS_LOCAL } from './config.js';
 import { hydrateIcons } from './ui.js';
+import { setAiContext } from './ai-drawer.js';
 import { listAvailableMonths, loadTransactions } from './store.js';
 import { getToken, login, clearToken, testToken, hasToken } from './github-api.js';
 import {
@@ -524,3 +525,6 @@ document.getElementById('backup-btn').addEventListener('click', async (e) => {
   } catch (err) { showError(err); status.textContent = ''; }
   btn.disabled = false;
 });
+
+setAiContext('Trang Cài đặt: tài khoản, ngân sách từng danh mục, thu nhập cố định, danh mục.', 'Cài đặt',
+  ['Ngân sách hiện tại có hợp lý không?', 'Nên đặt ngân sách tiền chợ bao nhiêu?', 'Quy tắc 50/30/20 áp vào nhà mình thế nào?']);

@@ -182,10 +182,11 @@ def _categories_brief() -> str:
                       ensure_ascii=False)
 
 
-ADVISOR = ("Bạn là cố vấn tài chính gia đình của Trung (Việt Nam). Dữ liệu dưới đây là sổ thu chi THẬT của gia đình. "
+NAMES = {"trung.caolenam@gmail.com": "Trung", "lephuc1702@gmail.com": "Phúc"}
+ADVISOR = ("Bạn là cố vấn tài chính gia đình (Việt Nam), đang trả lời {who}. Dữ liệu dưới đây là sổ thu chi THẬT của gia đình. "
            "Chỉ dựa trên dữ liệu, không bịa số. Trả lời tiếng Việt, ngắn gọn, có số cụ thể (định dạng 1.234.000đ), "
            "Markdown gọn (tiêu đề nhỏ, gạch đầu dòng). Không khuyên đầu tư chứng khoán/crypto cụ thể. "
-           "Khi phù hợp, kết thúc bằng 1 việc làm được ngay.\n\nDỮ LIỆU:\n{ctx}\n\n{task}")
+           "Khi phù hợp, kết thúc bằng 1 việc làm được ngay.\n\nDỮ LIỆU:\n{ctx}\n\n{page}{task}")
 REVIEW_TASK = ("Nhận xét tháng hiện tại, đúng 5 mục: **Tình hình** (thu/chi/số dư so với ngân sách, tốc độ chi theo số ngày đã qua) · "
                "**Vượt/sắp vượt ngân sách** · **Khoản bất thường** (so với 2 tháng trước) · **Dự báo cuối tháng** (ngoại suy tuyến tính, nói rõ là ước tính) · "
                "**3 việc nên làm** cụ thể.")
@@ -206,7 +207,7 @@ def _bridge(prompt: str) -> str:
     return r.stdout.strip()
 
 
-def _run_ai(jid: str, mode: str, text: str, history: list):
+def _run_ai(jid: str, mode: str, text: str, history: list, who: str = "bạn", page: str = ""):
     try:
         if mode == "parse":
             raw = _bridge(PARSE_PROMPT.format(today=date.today().isoformat(), cats=_categories_brief(), text=text[:500]))
@@ -215,9 +216,11 @@ def _run_ai(jid: str, mode: str, text: str, history: list):
             if mode == "review":
                 task = REVIEW_TASK
             else:
-                conv = "\n".join(f"{'Trung' if h.get('role') == 'user' else 'Cố vấn'}: {h.get('content', '')}" for h in history[-10:])
-                task = f"Hội thoại:\n{conv}\nTrung: {text[:2000]}\n\nTrả lời câu hỏi mới nhất của Trung."
-            res = {"text": _bridge(ADVISOR.format(ctx=_finance_context(), task=task))}
+                conv = "\n".join(f"{who if h.get('role') == 'user' else 'Cố vấn'}: {h.get('content', '')}" for h in history[-10:])
+                task = f"Hội thoại:\n{conv}\n{who}: {text[:2000]}\n\nTrả lời câu hỏi mới nhất của {who}."
+            # Màn hình người dùng đang xem → hiểu "cái này", "khoản này", "tháng này" chỉ cái gì
+            page_note = f"NGƯỜI DÙNG ĐANG XEM (bối cảnh câu hỏi): {page[:1500]}\n\n" if page else ""
+            res = {"text": _bridge(ADVISOR.format(who=who, ctx=_finance_context(), page=page_note, task=task))}
         _jobs[jid] = {"status": "done", "result": res, "at": datetime.now()}
     except Exception as e:  # noqa: BLE001
         _ai_used["n"] = max(0, _ai_used["n"] - 1)  # lỗi thì hoàn lượt
@@ -226,7 +229,7 @@ def _run_ai(jid: str, mode: str, text: str, history: list):
 
 @app.post("/api/ai/job")
 async def ai_job(request: Request):
-    require_access(request)
+    email = require_access(request)
     body = await request.json()
     mode = body.get("mode")
     if mode not in ("chat", "review", "parse"):
@@ -242,7 +245,8 @@ async def ai_job(request: Request):
         _jobs.pop(k, None)
     jid = uuid.uuid4().hex[:12]
     _jobs[jid] = {"status": "running", "at": datetime.now()}
-    threading.Thread(target=_run_ai, args=(jid, mode, str(body.get("text", "")), body.get("history") or []), daemon=True).start()
+    threading.Thread(target=_run_ai, args=(jid, mode, str(body.get("text", "")), body.get("history") or [],
+                                                        NAMES.get(email, "bạn"), str(body.get("page", ""))), daemon=True).start()
     return {"job": jid, "left": AI_DAILY_LIMIT - _ai_used["n"]}
 
 

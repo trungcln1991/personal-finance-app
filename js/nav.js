@@ -1,5 +1,6 @@
 import { hasToken } from './github-api.js';
 import { IS_LOCAL } from './config.js';
+import { initAiDrawer, toggleAi } from './ai-drawer.js';
 
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
@@ -67,7 +68,7 @@ export const LOGOUT_URL = '/cdn-cgi/access/logout';
 const NAV = [
   { href: 'index.html', label: 'Tổng quan', id: 'dashboard', icon: 'home' },
   { href: 'transactions.html', label: 'Giao dịch', id: 'transactions', icon: 'list' },
-  { href: 'ai.html', label: 'Trợ lý AI', short: 'Trợ lý', id: 'ai', icon: 'sparkle' },
+  { href: '#ai', label: 'Trợ lý AI', short: 'Trợ lý', id: 'ai', icon: 'sparkle', drawer: true },
   { href: 'settings.html', label: 'Cài đặt', id: 'settings', icon: 'settings' },
 ];
 
@@ -77,7 +78,9 @@ export function renderNav(active) {
   side.innerHTML = `
     <a class="brand" href="index.html"><span class="brand-mark">₫</span>Sổ Thu Chi</a>
     <a class="btn btn-primary side-add" href="add.html">${icon('plus')}Thêm giao dịch</a>
-    ${NAV.map((it) => `<a href="${it.href}" class="side-link ${it.id === active ? 'active' : ''}">${icon(it.icon)}${it.label}</a>`).join('')}
+    ${NAV.map((it) => it.drawer
+    ? `<button type="button" class="side-link" data-ai-toggle>${icon(it.icon)}${it.label}<kbd class="side-kbd">⌘J</kbd></button>`
+    : `<a href="${it.href}" class="side-link ${it.id === active ? 'active' : ''}">${icon(it.icon)}${it.label}</a>`).join('')}
     <div class="side-foot">
       <div data-pwa-install data-btn-class="btn btn-sm btn-secondary btn-block"></div>
       <div class="side-user"><span class="avatar" id="side-avatar">·</span><div class="who"><span class="muted">Đang đăng nhập</span><b id="side-email">—</b></div></div>
@@ -88,11 +91,15 @@ export function renderNav(active) {
   const tab = document.createElement('nav');
   tab.className = 'tabbar';
   tab.setAttribute('aria-label', 'Điều hướng chính');
-  const t = (it) => `<a href="${it.href}" class="tab ${it.id === active ? 'active' : ''}">${icon(it.icon)}<span>${it.short || it.label}</span></a>`;
+  const t = (it) => it.drawer
+    ? `<button type="button" class="tab" data-ai-toggle>${icon(it.icon)}<span>${it.short || it.label}</span></button>`
+    : `<a href="${it.href}" class="tab ${it.id === active ? 'active' : ''}">${icon(it.icon)}<span>${it.short || it.label}</span></a>`;
   tab.innerHTML = `${t(NAV[0])}${t(NAV[1])}
     <a href="add.html" class="tab-add" aria-label="Thêm giao dịch"><span>${icon('plus')}</span></a>
     ${t(NAV[2])}${t(NAV[3])}`;
   document.body.appendChild(tab);
+  initAiDrawer();
+  document.querySelectorAll('[data-ai-toggle]').forEach((b) => { b.onclick = toggleAi; });
 
   getMe().then((me) => {
     if (!me?.email) return;

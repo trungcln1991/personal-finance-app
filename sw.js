@@ -1,4 +1,4 @@
-const CACHE_NAME = 'thu-chi-shell-v16';
+const CACHE_NAME = 'thu-chi-shell-v17';
 const SHELL_FILES = [
   './',
   './index.html',
@@ -18,7 +18,7 @@ const SHELL_FILES = [
   './js/pwa-install.js',
   './icons/icon-192.png',
   './icons/apple-touch-icon.png',
-  './js/ai.js',
+  './js/ai-drawer.js',
   './js/ai-client.js',
   './ai.html',
   './manifest.json',

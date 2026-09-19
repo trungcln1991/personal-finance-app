@@ -2,6 +2,7 @@ import { renderNav, requireToken, showError, icon, toast } from './nav.js';
 import { loadCategories, loadTransactions, loadTransactionsRange, formatVnd, currentMonthKey, categoryName, categoryIcon, shiftMonthKey, paymentMethodName, priorityName, formatDateVn } from './store.js';
 import { esc } from './ai-client.js';
 import { txRowHtml, openTxDetail, dayLabel, hydrateIcons, txTitle } from './ui.js';
+import { setAiContext } from './ai-drawer.js';
 
 renderNav('transactions');
 hydrateIcons();
@@ -73,6 +74,13 @@ function renderList() {
   $('s-net-l').textContent = 'Chênh lệch';
   $('range-label').dataset.count = filtered.length;
   $('range-label').textContent = `${$('range-label').dataset.base || 'Sổ giao dịch'} · ${filtered.length} giao dịch`;
+
+  const scope = isRangeMode() ? $('range-label').dataset.base : monthLabel(monthKey);
+  const filt = [F.type, F.cat, F.pay, F.prio].filter((e) => e.value).map((e) => e.options[e.selectedIndex].text).concat(F.q.value.trim() ? [`tìm "${F.q.value.trim()}"`] : []);
+  setAiContext(`Trang Giao dịch, ${scope}${filt.length ? ', lọc: ' + filt.join(', ') : ''}. Đang hiện ${filtered.length} giao dịch: thu ${formatVnd(inc)}, chi ${formatVnd(exp)}. `
+    + 'Danh sách (ngày|loại|tên|số tiền|ghi chú): ' + filtered.slice(0, 60).map((t) => `${t.date}|${t.type}|${txTitle(t, categories)}|${t.amount}|${t.note || ''}`).join('; '),
+  `Giao dịch ${scope}${filt.length ? ' (đang lọc)' : ''}`,
+  ['Tóm tắt các giao dịch đang hiện', 'Khoản nào lớn bất thường?', 'Ngày nào chi nhiều nhất, vì sao?', 'Gom nhóm các khoản ăn uống giúp mình']);
 
   if (!transactions.length) {
     list.innerHTML = `<div class="card empty"><div class="big">📒</div>Chưa có giao dịch nào ${isRangeMode() ? 'trong khoảng ngày này' : 'trong tháng này'}.<br><a class="btn btn-primary" style="margin-top:12px" href="add.html">Thêm giao dịch</a></div>`;
