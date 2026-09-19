@@ -1,0 +1,11 @@
+services:
+  taichinh:
+    build: { context: .., dockerfile: server/Dockerfile }
+    container_name: taichinh
+    restart: unless-stopped
+    # Chỉ nghe mạng nội bộ vmbr1 (không bind 0.0.0.0 ra LAN nhà)
+    ports: ["10.10.10.107:8087:8000"]
+    volumes: ["/data/repo:/data/repo"]
+    env_file: [.env]
+    environment:
+      - TZ=Asia/Ho_Chi_Minh

@@ -1,4 +1,17 @@
-import { WORKER_URL, BRANCH } from './config.js';
+import { WORKER_URL, BRANCH, IS_LOCAL, NEW_HOME } from './config.js';
+
+// Bản cũ (GitHub Pages): hiện thông báo đã chuyển nhà
+if (!IS_LOCAL && typeof document !== 'undefined') {
+  const show = () => {
+    if (document.getElementById('moved-banner')) return;
+    const b = document.createElement('div');
+    b.id = 'moved-banner';
+    b.style.cssText = 'position:sticky;top:0;z-index:9999;background:#b45309;color:#fff;padding:10px 14px;font:600 14px system-ui;text-align:center';
+    b.innerHTML = 'Sổ Thu Chi đã chuyển sang <a href="' + NEW_HOME + '" style="color:#fff;text-decoration:underline">taichinh.dichvunamtrung.com</a> — bản này chỉ còn xem, không ghi được.';
+    document.body.prepend(b);
+  };
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', show); else show();
+}
 
 const SESSION_KEY = 'pfa_session';
 
@@ -16,6 +29,7 @@ function base64ToUtf8(b64) {
 }
 
 export function getToken() {
+  if (IS_LOCAL) return 'cf-access'; // đã xác thực bằng Cloudflare Access + MFA
   return localStorage.getItem(SESSION_KEY) || '';
 }
 
@@ -77,6 +91,7 @@ export async function getJsonFile(path) {
 
 // Ghi đè 1 file JSON. sha=null nếu file mới (tạo lần đầu).
 export async function putJsonFile(path, data, sha, message) {
+  if (!IS_LOCAL) throw new Error('Sổ Thu Chi đã chuyển sang taichinh.dichvunamtrung.com — bản cũ này không ghi được nữa.');
   const body = {
     message,
     content: utf8ToBase64(JSON.stringify(data, null, 2)),
