@@ -308,6 +308,8 @@ let cur_mk = new URLSearchParams(location.search).get('month') || currentMonthKe
 $('prev-month').addEventListener('click', () => { cur_mk = shiftMonthKey(cur_mk, -1); render(cur_mk); });
 $('next-month').addEventListener('click', () => { cur_mk = shiftMonthKey(cur_mk, 1); render(cur_mk); });
 
+window.addEventListener('finance:changed', () => render(cur_mk));  // trợ lý AI vừa ghi
+
 (async () => {
   if (!(await requireToken())) return;
   render(cur_mk);

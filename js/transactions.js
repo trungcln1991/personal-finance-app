@@ -172,6 +172,8 @@ $('export-csv').onclick = exportCsv;
 $('prev-month').onclick = () => { monthKey = shiftMonthKey(monthKey, -1); history.replaceState(null, '', `?month=${monthKey}`); load(); };
 $('next-month').onclick = () => { monthKey = shiftMonthKey(monthKey, 1); history.replaceState(null, '', `?month=${monthKey}`); load(); };
 
+window.addEventListener('finance:changed', load);  // trợ lý AI vừa ghi
+
 (async () => {
   if (!(await requireToken())) return;
   load();

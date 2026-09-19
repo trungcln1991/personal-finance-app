@@ -31,7 +31,7 @@ DEV_NO_AUTH = os.getenv("DEV_NO_AUTH") == "1"  # chỉ dùng khi chạy thử tr
 
 BRIDGE_HOST = os.getenv("BRIDGE_HOST", "trungcln@10.10.10.104")
 BRIDGE_KEY = os.getenv("BRIDGE_KEY", "/keys/id_ed25519_bridge")
-AI_DAILY_LIMIT = int(os.getenv("AI_DAILY_LIMIT", "30"))
+AI_DAILY_LIMIT = int(os.getenv("AI_DAILY_LIMIT", "150"))  # trợ lý hội thoại: mỗi câu nói = 1 lượt
 
 app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
 _lock = threading.Lock()
@@ -209,6 +209,50 @@ IMAGE_PROMPT = ("Đọc ảnh chi tiêu (hoá đơn, bill, ảnh chụp màn hì
                 '"question":"nếu thiếu thông tin quan trọng (vd không rõ trả bằng gì, số mờ) thì 1 câu hỏi lại, không thì rỗng"}}')
 
 
+def _tx_index(months: int = 2) -> str:
+    """Giao dịch N tháng gần nhất KÈM id — để trợ lý chỉ đúng khoản cần sửa/xoá."""
+    out = ["id|ngày|loại|danh mục id|số tiền|thanh toán id|từ|đến|mức độ|ghi chú"]
+    for mk in _month_keys(months):
+        for t in sorted(_load(f"transactions/{mk}.json", []) or [], key=lambda t: t.get("date", ""), reverse=True):
+            out.append("|".join(str(t.get(k) or "") for k in ("id", "date", "type", "category", "amount", "paymentMethod",
+                                                              "fromPayment", "toPayment", "priority")) + "|" + (t.get("note") or "")[:50])
+    return "\n".join(out[:400])
+
+
+AGENT_PROMPT = """Bạn là trợ lý GIỌNG NÓI của app Sổ Thu Chi gia đình, đang nói chuyện với {who}. Hôm nay {today}.
+Bạn giúp: (1) TẠO giao dịch mới, (2) SỬA giao dịch, (3) XOÁ giao dịch, (4) TRA CỨU/hỏi đáp số liệu.
+Nguyên tắc:
+- Hỏi TỪNG câu ngắn cho tới khi đủ thông tin. Tạo giao dịch chi cần: số tiền, danh mục, ngày (mặc định hôm nay),
+  phương thức thanh toán; mức độ cần thiết và ghi chú là tuỳ chọn (tự đoán hợp lý, không cần hỏi). Chuyển khoản cần từ/đến.
+- Mặc định là khoản CHI (chỉ là thu khi người dùng nói lương, được cho, nhận, hoàn tiền…) — đừng hỏi "thu hay chi".
+- DANH MỤC và mức độ: đoán được thì đoán (vd "phở" → Tiền ăn sáng/chiều). 'k'=nghìn, 'tr'/'triệu'=triệu, 'lít'=trăm nghìn.
+- PHƯƠNG THỨC THANH TOÁN: KHÔNG tự đoán. Người dùng chưa nói thì HỎI ("Trả bằng tiền mặt, ngân hàng hay thẻ?"). Có thể gợi ý cái hay dùng.
+- SỬA/XOÁ: tìm đúng giao dịch trong danh sách có id bên dưới. Nhiều khoản khớp thì liệt kê ngắn để người dùng chọn. KHÔNG BAO GIỜ bịa id.
+- Đủ thông tin → ready=true, câu "say" phải ĐỌC LẠI tóm tắt và hỏi "Lưu nhé?" / "Xoá nhé?". App sẽ tự hỏi xác nhận, bạn KHÔNG tự lưu.
+- Người dùng từ chối hoặc muốn sửa → cập nhật draft theo ý họ, ready=true lại khi đủ.
+- "say" để ĐỌC TO: tối đa 2 câu, tự nhiên, không markdown, số tiền đọc kiểu "50 nghìn", "1 triệu 2".
+- Tra cứu: trả lời ngắn trong "say", chi tiết (bảng/gạch đầu dòng Markdown) để trong "detail". Chỉ dùng số liệu có thật.
+- Chỉ dùng id danh mục/phương thức trong danh sách hợp lệ.
+
+DANH MỤC & PHƯƠNG THỨC HỢP LỆ: {cats}
+
+SỐ LIỆU TỔNG HỢP:
+{ctx}
+
+GIAO DỊCH 2 THÁNG GẦN NHẤT (có id):
+{index}
+
+{page}HỘI THOẠI:
+{conv}
+{who}: {text}
+
+Reply ONLY JSON (không thêm chữ nào khác):
+{{"say":"...","detail":"markdown hoặc rỗng","intent":"create|update|delete|query|chat",
+"draft":{{"id":"chỉ khi update/delete","type":"expense|income|transfer","date":"YYYY-MM-DD","amount":0,"category":"id","paymentMethod":"id|null",
+"fromPayment":"id|null","toPayment":"id|null","priority":"id|null","note":""}},"ready":false}}
+(draft = null khi query/chat; với update: draft là giao dịch SAU khi sửa, đủ mọi trường; với delete: chỉ cần id)"""
+
+
 def _bridge(prompt: str, images: list | None = None) -> str:
     if images:  # cầu nối CT104 nhận ảnh qua phong bì JSON (19/09/2026)
         prompt = json.dumps({"__bridge": 1, "prompt": prompt, "images": images})
@@ -222,7 +266,16 @@ def _bridge(prompt: str, images: list | None = None) -> str:
 
 def _run_ai(jid: str, mode: str, text: str, history: list, who: str = "bạn", page: str = "", images: list | None = None):
     try:
-        if mode == "image":
+        if mode == "agent":
+            conv = "\n".join(f"{who if h.get('role') == 'user' else 'Trợ lý'}: {h.get('content', '')}" for h in history[-14:])
+            page_note = f"NGƯỜI DÙNG ĐANG XEM: {page[:1000]}\n\n" if page else ""
+            raw = _bridge(AGENT_PROMPT.format(who=who, today=date.today().isoformat(), cats=_categories_brief(), ctx=_finance_context()[:12000],
+                                              index=_tx_index(), page=page_note, conv=conv, text=text[:1500]))
+            try:
+                res = {"agent": json.loads(raw[raw.find("{"):raw.rfind("}") + 1])}
+            except Exception:  # AI không trả JSON → coi như câu trả lời thường
+                res = {"agent": {"say": raw[:600], "detail": "", "intent": "chat", "draft": None, "ready": False}}
+        elif mode == "image":
             hint = f"Người dùng ghi chú thêm: \"{text[:500]}\"\n" if text else ""
             raw = _bridge(IMAGE_PROMPT.format(today=date.today().isoformat(), cats=_categories_brief(), hint=hint), images)
             res = {"scan": json.loads(raw[raw.find("{"):raw.rfind("}") + 1])}
@@ -249,7 +302,7 @@ async def ai_job(request: Request):
     email = require_access(request)
     body = await request.json()
     mode = body.get("mode")
-    if mode not in ("chat", "review", "parse", "image"):
+    if mode not in ("chat", "review", "parse", "image", "agent"):
         raise HTTPException(400, "Chế độ AI không hợp lệ")
     images = []
     if mode == "image":
