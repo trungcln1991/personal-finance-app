@@ -156,9 +156,9 @@ async function render(monthKey) {
       if (!list.length) return '';
       const total = list.reduce((s, a) => s + (a.balance || 0), 0);
       return `<div class="owner-group"><div class="owner-head"><span>${o.label}</span><span class="money">${formatVnd(total)}</span></div>
-        ${list.map((a) => `<div class="acct"><span class="cat-ico">${paymentType(a.type).icon}</span>
+        ${list.map((a) => `<a class="acct drill-link" href="transactions.html?month=${monthKey}&pay=${encodeURIComponent(a.id)}"><span class="cat-ico">${paymentType(a.type).icon}</span>
           <span class="acct-name"><b>${esc(a.name)}</b><span>${paymentType(a.type).label}</span></span>
-          <span class="acct-bal money">${a.balance === null ? '<span class="badge warn">Chưa cấu hình</span>' : formatVnd(a.balance)}</span></div>`).join('')}</div>`;
+          <span class="acct-bal money">${a.balance === null ? '<span class="badge warn">Chưa cấu hình</span>' : formatVnd(a.balance)}</span><span class="chev">${icon('right')}</span></a>`).join('')}</div>`;
     }).join('');
     $('owner-balance-grid').innerHTML = groups || '<p class="muted">Chưa có tài khoản tiền mặt/ngân hàng. <a href="settings.html#payment">Thêm ngay</a></p>';
 
@@ -195,18 +195,40 @@ async function render(monthKey) {
         bar = `<div class="bar"><i style="width:${totalExp ? (spent / totalExp) * 100 : 0}%;background:var(--text-2);opacity:.45"></i></div>`;
         sub = 'chưa đặt ngân sách';
       }
-      return `<div class="rank-row"><span class="cat-ico">${categoryIcon(id)}</span>
+      return `<div class="cat-item" data-cat="${esc(id)}">
+        <div class="rank-row drill" role="button" tabindex="0" aria-expanded="false"><span class="cat-ico">${categoryIcon(id)}</span>
         <div class="rank-body"><div class="rank-top"><span class="rank-name">${esc(name)}</span><b class="money">${formatVnd(spent)}</b></div>${bar}
-        <div class="rank-sub"><span>${sub}</span><span>${totalExp ? Math.round((spent / totalExp) * 100) : 0}% tổng chi</span></div></div></div>`;
+        <div class="rank-sub"><span>${sub}</span><span>${totalExp ? Math.round((spent / totalExp) * 100) : 0}% tổng chi<span class="chev">${icon('right')}</span></span></div></div></div>
+        <div class="drill-panel" hidden></div></div>`;
     }).join('') : '<div class="empty"><div class="big">🧾</div>Chưa có khoản chi nào tháng này.</div>';
 
+    // Bấm 1 danh mục → bung chi tiết ngay bên dưới (chỉ mở 1 mục 1 lúc)
+    const prevExp = allTx.filter((t) => t.type === 'expense' && t.date.slice(0, 7) === prevMk);
+    const drillCtx = { monthKey, prevMk, categories, expenses: cur.expenseList, prevExp, bMap, dayOfMonth, daysIn, rerender: () => render(monthKey) };
+    $('cat-list').querySelectorAll('.cat-item').forEach((item) => {
+      const row = item.querySelector('.drill');
+      const toggle = () => toggleCatDrill(item, drillCtx);
+      row.onclick = toggle;
+      row.onkeydown = (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggle(); } };
+    });
+
     // Cảnh báo vượt ngân sách
-    const overRows = budgets.map(([id, b]) => ({ name: b.cfg.name || id, icon: categoryIcon(id), over: (byCat[id] || 0) - b.active.monthlyAmount }))
+    const overRows = budgets.map(([id, b]) => ({ id, name: b.cfg.name || id, icon: categoryIcon(id), over: (byCat[id] || 0) - b.active.monthlyAmount }))
       .filter((r) => r.over > 0).sort((a, b) => b.over - a.over);
     $('over-budget-card').hidden = !overRows.length;
     if (overRows.length) {
       $('over-title').textContent = `${overRows.length} mục vượt ngân sách · tổng ${formatVnd(overRows.reduce((s, r) => s + r.over, 0))}`;
-      $('over-budget-list').innerHTML = overRows.map((r) => `<div class="over-row"><span>${r.icon} ${esc(r.name)}</span><span class="money">+${formatVnd(r.over)}</span></div>`).join('');
+      $('over-budget-list').innerHTML = overRows.map((r) => `<button type="button" class="over-row" data-cat="${esc(r.id)}"><span>${r.icon} ${esc(r.name)}</span><span class="money">+${formatVnd(r.over)}</span></button>`).join('')
+        + '<div class="small muted" style="margin-top:4px">Bấm vào mục để xem vượt từ ngày nào, do những khoản nào.</div>';
+      // Bấm mục vượt → cuộn tới danh mục đó bên dưới và bung chi tiết
+      $('over-budget-list').querySelectorAll('.over-row').forEach((b) => {
+        b.onclick = () => {
+          const item = [...$('cat-list').querySelectorAll('.cat-item')].find((el) => el.dataset.cat === b.dataset.cat);
+          if (!item) return;
+          if (item.querySelector('.drill-panel').hidden) toggleCatDrill(item, drillCtx);
+          item.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        };
+      });
     }
 
     // ── Mức độ cần thiết ──
@@ -215,7 +237,7 @@ async function render(monthKey) {
     for (const t of cur.expenseList) byP[t.priority || 'nice'] = (byP[t.priority || 'nice'] || 0) + t.amount;
     $('priority-card').innerHTML = totalExp ? `
       <div class="stack-bar">${P.map(([k]) => byP[k] ? `<i class="p-${k}" style="width:${(byP[k] / totalExp) * 100}%"></i>` : '').join('')}</div>
-      <div class="stack-legend">${P.map(([k, l]) => `<div><i class="p-${k}"></i>${l}<span class="muted">${Math.round((byP[k] / totalExp) * 100)}%</span><b class="money">${formatVnd(byP[k])}</b></div>`).join('')}</div>
+      <div class="stack-legend">${P.map(([k, l]) => `<a class="drill-link" href="transactions.html?month=${monthKey}&type=expense&prio=${k}"><i class="p-${k}"></i>${l}<span class="muted">${Math.round((byP[k] / totalExp) * 100)}%</span><b class="money">${formatVnd(byP[k])}</b><span class="chev">${icon('right')}</span></a>`).join('')}</div>
       ${byP.unnecessary ? `<p class="small muted" style="margin:10px 0 0">Cắt được phần "Không cần thiết" là dư thêm ${formatVnd(byP.unnecessary)} tháng này.</p>` : ''}`
       : '<p class="muted" style="margin:0">Chưa có khoản chi.</p>';
 
@@ -250,6 +272,73 @@ async function render(monthKey) {
   }
 }
 
+// ── Chi tiết 1 danh mục (bung ngay dưới dòng) ──
+// Trả lời 3 câu: tiêu vào đâu (danh sách), vượt từ lúc nào (ngày + khoản làm vượt), so tháng trước ra sao.
+function toggleCatDrill(item, ctx) {
+  const list = item.closest('#cat-list');
+  const panel = item.querySelector('.drill-panel');
+  const opening = panel.hidden;
+  list.querySelectorAll('.cat-item').forEach((el) => {
+    el.querySelector('.drill-panel').hidden = true;
+    el.querySelector('.drill').setAttribute('aria-expanded', 'false');
+    el.classList.remove('open');
+  });
+  if (!opening) return;
+  panel.innerHTML = catDrillHtml(item.dataset.cat, ctx);
+  panel.hidden = false;
+  item.classList.add('open');
+  item.querySelector('.drill').setAttribute('aria-expanded', 'true');
+  panel.querySelectorAll('.tx-item').forEach((el) => {
+    el.onclick = () => openTxDetail(ctx.expenses.find((t) => t.id === el.dataset.id), ctx.categories, ctx.rerender);
+  });
+}
+
+function catDrillHtml(id, { monthKey, prevMk, categories, expenses, prevExp, bMap, dayOfMonth, daysIn }) {
+  const txs = expenses.filter((t) => t.category === id);
+  const spent = sum(txs);
+  const prevSpent = sum(prevExp.filter((t) => t.category === id));
+  const limit = bMap[id]?.active.monthlyAmount || 0;
+  const link = `transactions.html?month=${monthKey}&type=expense&cat=${encodeURIComponent(id)}`;
+
+  const stats = [
+    ['Số lần chi', `${txs.length} lần`],
+    ['Trung bình / lần', txs.length ? `<span class="money">${formatVnd(Math.round(spent / txs.length))}</span>` : '—'],
+    [`So ${shortMonth(prevMk)}`, prevSpent
+      ? `<span class="${spent > prevSpent ? 'neg' : 'pos'}">${spent > prevSpent ? '▲' : '▼'} ${Math.abs(Math.round(((spent - prevSpent) / prevSpent) * 100))}%</span> <span class="muted money">(${formatVnd(prevSpent)})</span>`
+      : '<span class="muted">tháng trước 0</span>'],
+  ];
+
+  // Ngân sách: vượt từ ngày nào, do khoản nào / còn tiêu được bao nhiêu mỗi ngày
+  let note = '';
+  let crossId = null;
+  if (limit) {
+    const asc = [...txs].sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
+    let run = 0;
+    for (const t of asc) { run += t.amount; if (run > limit) { crossId = t.id; break; } }
+    const cross = asc.find((t) => t.id === crossId);
+    if (cross) {
+      const after = asc.slice(asc.indexOf(cross) + 1);
+      note = `<div class="drill-note danger">Vượt hạn mức <b class="money">${formatVnd(limit)}</b> từ <b>${formatDateVn(cross.date)}</b>
+        (khoản <b class="money">${formatVnd(cross.amount)}</b>${cross.note ? ` · ${esc(cross.note)}` : ''})${after.length ? ` · sau đó thêm ${after.length} khoản <b class="money">${formatVnd(sum(after))}</b>` : ''}.</div>`;
+    } else if (dayOfMonth) {
+      const daysLeft = daysIn - dayOfMonth + 1;
+      note = `<div class="drill-note">Còn <b class="money">${formatVnd(limit - spent)}</b> cho ${daysLeft} ngày cuối tháng → tiêu tối đa ~<b class="money">${formatVnd(Math.floor((limit - spent) / daysLeft))}</b>/ngày.</div>`;
+    }
+  }
+
+  const desc = [...txs].sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0));
+  const SHOW = 8;
+  const rows = desc.slice(0, SHOW).map((t) => {
+    const html = txRowHtml(t, categories, { showDate: true });
+    return t.id === crossId ? html.replace('class="tx-item"', 'class="tx-item cross" title="Khoản này làm vượt ngân sách"') : html;
+  }).join('');
+
+  return `<div class="drill-stats">${stats.map(([k, v]) => `<div><span>${k}</span><b>${v}</b></div>`).join('')}</div>
+    ${note}
+    ${txs.length ? `<div class="tx-card drill-tx">${rows}</div>` : '<p class="small muted" style="margin:8px 0">Chưa có khoản chi nào trong danh mục này tháng này.</p>'}
+    <a class="btn btn-secondary btn-sm drill-open" href="${link}">${desc.length > SHOW ? `Xem đủ ${desc.length} giao dịch` : 'Mở trong trang Giao dịch'} ${icon('right')}</a>`;
+}
+
 function renderDebts(debts, payAccounts, monthKey) {
   const box = $('credit-wallet-card');
   if (!debts.length) {
@@ -267,7 +356,7 @@ function renderDebts(debts, payAccounts, monthKey) {
       : p.totalDebt <= 0 ? '<span class="badge good">Hết nợ</span>' : '';
     const suggested = p.dueAmount > 0 ? p.dueAmount : p.totalDebt;
     return `<div class="debt" data-method="${esc(p.id)}">
-      <div class="debt-top"><span class="cat-ico">${t.icon}</span><span class="acct-name"><b>${esc(p.name)}</b><span>Tổng nợ <span class="money">${formatVnd(p.totalDebt)}</span></span></span>${badge}</div>
+      <a class="debt-top drill-link" href="transactions.html?month=${monthKey}&pay=${encodeURIComponent(p.id)}"><span class="cat-ico">${t.icon}</span><span class="acct-name"><b>${esc(p.name)}</b><span>Tổng nợ <span class="money">${formatVnd(p.totalDebt)}</span> · xem giao dịch</span></span>${badge}<span class="chev">${icon('right')}</span></a>
       <div class="debt-meta">
         <div class="${p.isOverdue ? 'overdue' : 'due'}"><span>Đến hạn phải trả</span><b class="money">${formatVnd(p.dueAmount)}</b></div>
         <div><span>${p.dueDate ? 'Kỳ hiện tại (chưa chốt)' : 'Phát sinh tháng này'}</span><b class="money">${formatVnd(p.currentMonthSpend)}</b></div>

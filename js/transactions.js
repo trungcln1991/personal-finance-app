@@ -21,6 +21,23 @@ const F = {
   q: $('filter-note'), from: $('filter-from'), to: $('filter-to'),
 };
 
+// Link từ trang Tổng quan mang sẵn bộ lọc: ?type=expense&cat=an-uong / ?pay=... / ?prio=... / ?q=...
+// Ô chọn danh mục/phương thức chỉ có option sau khi nạp categories → áp 1 lần sau lần nạp đầu.
+const pendingFilters = { type: params.get('type'), cat: params.get('cat'), pay: params.get('pay'), prio: params.get('prio'), q: params.get('q') };
+if (params.get('from')) F.from.value = params.get('from');
+if (params.get('to')) F.to.value = params.get('to');
+function applyUrlFilters() {
+  let any = false;
+  for (const [k, v] of Object.entries(pendingFilters)) {
+    if (v) { F[k].value = v; any = true; }
+    pendingFilters[k] = null;
+  }
+  if (any || F.from.value || F.to.value) {
+    $('filters-card').classList.remove('hidden');
+    $('filter-toggle').setAttribute('aria-expanded', 'true');
+  }
+}
+
 // Có chọn khoảng ngày thì nạp nhiều tháng thay vì 1 tháng.
 const isRangeMode = () => Boolean(F.from.value || F.to.value);
 
@@ -45,7 +62,7 @@ function matches(t) {
     const p = F.pay.value;
     if (!(t.type === 'transfer' ? t.fromPayment === p || t.toPayment === p : t.paymentMethod === p)) return false;
   }
-  if (F.prio.value && t.priority !== F.prio.value) return false;
+  if (F.prio.value && (t.type !== 'expense' || (t.priority || 'nice') !== F.prio.value)) return false;
   const q = fold(F.q.value.trim());
   if (q) {
     const hay = fold(`${t.note || ''} ${txTitle(t, categories)} ${t.amount}`);
@@ -122,6 +139,7 @@ async function load() {
     categories = c.categories;
     transactions = tx;
     populateFilterOptions();
+    applyUrlFilters();
     $('loading').hidden = true;
     renderList();
   } catch (err) {
@@ -169,8 +187,15 @@ $('filter-clear').onclick = () => {
   wasRange ? load() : renderList();
 };
 $('export-csv').onclick = exportCsv;
-$('prev-month').onclick = () => { monthKey = shiftMonthKey(monthKey, -1); history.replaceState(null, '', `?month=${monthKey}`); load(); };
-$('next-month').onclick = () => { monthKey = shiftMonthKey(monthKey, 1); history.replaceState(null, '', `?month=${monthKey}`); load(); };
+const goMonth = (d) => {
+  monthKey = shiftMonthKey(monthKey, d);
+  const u = new URLSearchParams({ month: monthKey });
+  [['type', F.type], ['cat', F.cat], ['pay', F.pay], ['prio', F.prio]].forEach(([k, el]) => { if (el.value) u.set(k, el.value); });
+  history.replaceState(null, '', `?${u}`);
+  load();
+};
+$('prev-month').onclick = () => goMonth(-1);
+$('next-month').onclick = () => goMonth(1);
 
 window.addEventListener('finance:changed', load);  // trợ lý AI vừa ghi
 
