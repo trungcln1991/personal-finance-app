@@ -44,10 +44,32 @@ export function md(src) {
   return html + (list ? '</ul>' : '');
 }
 
-export function listen(onText) {
+// Nhận giọng nói tiếng Việt. Bấm lần 1 = bắt đầu (xoá chữ cũ), bấm lần 2 = dừng.
+// btn: nút mic để hiện trạng thái (đỏ nhấp nháy khi đang thu); onStatus(text): dòng trạng thái.
+let active = null;
+const MIC_ERR = {
+  'not-allowed': 'Chưa cho phép dùng micro — bấm biểu tượng ổ khoá cạnh thanh địa chỉ để cho phép.',
+  'service-not-allowed': 'Trình duyệt chặn nhận giọng nói — thử Chrome hoặc Safari.',
+  'no-speech': 'Không nghe thấy gì — bấm mic rồi nói lại.',
+  'audio-capture': 'Không tìm thấy micro trên máy.',
+  network: 'Nhận giọng nói cần mạng — kiểm tra kết nối.',
+};
+export function listen(onText, { btn, onStatus } = {}) {
   const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-  if (!SR) { alert('Trình duyệt này chưa hỗ trợ nhận giọng nói — hãy gõ.'); return; }
-  const r = new SR(); r.lang = 'vi-VN'; r.interimResults = true;
-  r.onresult = (e) => onText([...e.results].map((x) => x[0].transcript).join(' '), e.results[e.results.length - 1].isFinal);
-  r.start();
+  if (!SR) { onStatus?.('Trình duyệt này chưa hỗ trợ nhận giọng nói — hãy gõ.'); return null; }
+  if (active) { active.stop(); return null; }   // đang thu → bấm lại để dừng
+  const r = new SR();
+  r.lang = 'vi-VN'; r.interimResults = true; r.continuous = false;
+  let got = false;
+  const setRec = (on) => { if (!btn) return; btn.classList.toggle('rec', on); btn.setAttribute('aria-pressed', on); btn.title = on ? 'Đang nghe — bấm để dừng' : 'Nói'; };
+  r.onstart = () => { setRec(true); onText('', false); onStatus?.('🔴 Đang nghe… nói xong tự dừng (bấm mic lần nữa để dừng ngay)'); };
+  r.onresult = (e) => {
+    got = true;
+    onText([...e.results].map((x) => x[0].transcript).join(' '), e.results[e.results.length - 1].isFinal);
+  };
+  r.onerror = (e) => { if (e.error !== 'aborted') onStatus?.('⚠ ' + (MIC_ERR[e.error] || 'Lỗi micro: ' + e.error)); };
+  r.onend = () => { active = null; setRec(false); if (got) onStatus?.('✓ Đã nghe xong — kiểm tra câu rồi bấm Điền'); };
+  active = r;
+  try { r.start(); } catch (e) { active = null; setRec(false); onStatus?.('⚠ Không bật được micro: ' + e.message); }
+  return r;
 }

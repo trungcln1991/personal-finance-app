@@ -128,7 +128,8 @@ export function initAiDrawer() {
   el.querySelector('#aid-form').onsubmit = (e) => { e.preventDefault(); send(input.value); };
   input.addEventListener('input', () => autoGrow(input));
   input.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); send(input.value); } });
-  el.querySelector('#aid-mic').onclick = () => listen((t) => { input.value = t; autoGrow(input); });
+  el.querySelector('#aid-mic').onclick = () => listen((t) => { input.value = t; autoGrow(input); },
+    { btn: el.querySelector('#aid-mic'), onStatus: (t) => { el.querySelector('#aid-left').textContent = t; } });
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape' && state.open && !document.querySelector('.sheet.open, .pwa-bd')) closeAi();
     if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'j') { e.preventDefault(); toggleAi(); }  // Ctrl/⌘+J mở nhanh

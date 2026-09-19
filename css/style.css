@@ -529,3 +529,20 @@ button.tab { border: 0; background: none; font: inherit; font-size: 11px; cursor
 .ai-drawer .ai-msg { max-width: 94%; font-size: 14.5px; }
 .aid-chips[hidden], .ai-fab[hidden] { display: none; }
 body.ai-open .pwa-banner { display: none; }
+
+/* ── Mic đang thu + hỏi lại + đọc ảnh (19/09) ─────────────────────────── */
+.icon-btn.rec { background: #D92D20; border-color: #D92D20; color: #fff; animation: recpulse 1.2s ease-in-out infinite; }
+@keyframes recpulse { 0%, 100% { box-shadow: 0 0 0 0 rgba(217, 45, 32, .55); } 50% { box-shadow: 0 0 0 8px rgba(217, 45, 32, 0); } }
+.ai-ask { margin-top: 10px; padding: 12px; border-radius: 12px; background: var(--brand-soft); border: 1px solid color-mix(in srgb, var(--brand) 35%, transparent); }
+.ai-ask-q { display: flex; gap: 8px; align-items: flex-start; font-size: 14px; }
+.ai-ask-q svg { width: 18px; height: 18px; color: var(--brand); flex: none; margin-top: 2px; }
+.ai-thumbs { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
+.ai-thumbs:empty { display: none; }
+.ai-thumbs img { width: 56px; height: 56px; object-fit: cover; border-radius: 10px; border: 1px solid var(--border); }
+.scan-list { margin-top: 10px; border: 1px solid var(--border); border-radius: 12px; overflow: hidden; }
+.scan-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 10px 12px; background: var(--surface-2); font-size: 13.5px; }
+.scan-row { display: grid; grid-template-columns: 22px minmax(0, 1fr) auto auto; gap: 10px; align-items: center; padding: 10px 12px; border-top: 1px solid var(--border); font-size: 14px; }
+.scan-row input { width: 18px; height: 18px; accent-color: var(--brand); }
+.scan-row .tx-info span { white-space: normal; }
+.scan-row .warn-cat { color: var(--warn); font-weight: 600; }
+.scan-foot { display: flex; gap: 8px; justify-content: flex-end; padding: 10px 12px; border-top: 1px solid var(--border); }

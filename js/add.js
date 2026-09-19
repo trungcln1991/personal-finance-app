@@ -1,6 +1,6 @@
 import { renderNav, requireToken, showError, clearError, icon, toast } from './nav.js';
 import { loadCategories, loadTransactions, addTransaction, updateTransaction, deleteTransaction, genId, formatNumber, parseAmountInput, attachAmountInput, categoryIcon, todayDateStr, currentMonthKey } from './store.js';
-import { aiCall, AI_AVAILABLE, listen as aiListen, esc } from './ai-client.js';
+import { aiCall, AI_AVAILABLE, listen, esc } from './ai-client.js';
 import { hydrateIcons } from './ui.js';
 import { setAiContext } from './ai-drawer.js';
 
@@ -220,29 +220,167 @@ $('delete-btn').addEventListener('click', async () => {
 init().then(() => setAiContext('Trang Thêm/Sửa giao dịch (form nhập tay). Người dùng có thể hỏi nên xếp khoản chi vào danh mục nào, mức độ cần thiết, hoặc có nên chi không.',
   'Thêm giao dịch', ['Khoản này nên xếp danh mục nào?', 'Tháng này còn bao nhiêu ngân sách ăn uống?', 'Mua món này có vượt ngân sách không?'])).catch(showError);
 
-// ── Nhập nhanh bằng câu nói: AI điền sẵn form, người dùng xem lại rồi tự bấm Lưu ──
+// ── Nhập nhanh: câu nói / giọng nói / ảnh hoá đơn. AI chỉ ĐIỀN form, người dùng xem lại rồi tự bấm Lưu. ──
+// Thiếu thông tin thì AI hỏi lại 1 câu → trả lời → AI điền lại. Ảnh nhiều giao dịch → danh sách để chọn.
 {
-  const box = $('ai-quick'), msg = $('ai-msg');
+  const box = $('ai-quick'), msg = $('ai-msg'), textEl = $('ai-text');
+  const askBox = $('ai-ask'), askIn = $('ai-ask-in'), scanBox = $('ai-scan');
   if (!AI_AVAILABLE) box.style.display = 'none';
+  $('ai-photo').innerHTML = icon('camera');
+  $('ai-ask-mic').innerHTML = icon('mic');
+  const status = (t) => { msg.textContent = t; };
   const setSel = (el, v) => { if (v && [...el.options].some((o) => o.value === v)) { el.value = v; return true; } return false; };
-  $('ai-mic').onclick = () => aiListen((t) => { $('ai-text').value = t; });
-  $('ai-text').addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); $('ai-fill').click(); } });
-  $('ai-fill').onclick = async () => {
-    const text = $('ai-text').value.trim(); if (!text) return;
-    const btn = $('ai-fill'); btn.disabled = true; msg.innerHTML = '<span class="thinking">AI đang đọc câu của bạn</span>';
+  let convo = null;      // { kind: 'parse'|'image', base: câu gốc, images } — để hỏi lại/bổ sung
+  let images = [];
+
+  $('ai-mic').onclick = () => (clearImages(), ask(''), scanBox.classList.add('hidden'), listen((t, fin) => { textEl.value = t; if (fin && t) status('✓ Đã nghe: bấm Điền (hoặc Enter) để AI điền form'); },
+    { btn: $('ai-mic'), onStatus: status }));
+  $('ai-ask-mic').onclick = () => listen((t) => { askIn.value = t; }, { btn: $('ai-ask-mic'), onStatus: status });
+  textEl.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); $('ai-fill').click(); } });
+  askIn.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); $('ai-ask-go').click(); } });
+
+  function applyDraft(d) {
+    setType(d.type === 'income' ? 'income' : 'expense');
+    if (d.date) dateEl.value = d.date;
+    if (d.amount) amountEl.value = formatNumber(d.amount);
+    const okCat = setSel(categoryEl, d.category);
+    setSel(paymentEl, d.paymentMethod);
+    setSel(priorityEl, d.priority);
+    if (d.note) noteEl.value = d.note;
+    drawCatGrid(); drawPrio(); syncDayChips();
+    [dateEl, amountEl, paymentEl, noteEl, $('cat-grid')].forEach((el) => { el.classList.add('ai-filled'); setTimeout(() => el.classList.remove('ai-filled'), 2500); });
+    return okCat;
+  }
+  // Câu hỏi lại: AI tự hỏi, hoặc app tự hỏi khi thiếu danh mục/số tiền/phương thức
+  function missingQuestion(d, okCat) {
+    if (d.question) return d.question;
+    if (!d.amount) return 'Số tiền là bao nhiêu?';
+    if (!okCat) return 'Khoản này thuộc danh mục nào?';
+    if (d.type !== 'income' && !d.paymentMethod) return 'Trả bằng gì (tiền mặt, ngân hàng, thẻ, ví trả sau)?';
+    return '';
+  }
+  function ask(q) {
+    askBox.classList.toggle('hidden', !q);
+    $('ai-ask-q').textContent = q || '';
+    askIn.value = '';
+    if (q) setTimeout(() => askIn.focus(), 50);
+  }
+
+  async function runParse(text) {
+    const btn = $('ai-fill'); btn.disabled = true; ask('');
+    msg.innerHTML = '<span class="thinking">AI đang đọc câu của bạn</span>';
     try {
       const { draft: d } = await aiCall({ mode: 'parse', text });
-      setType(d.type === 'income' ? 'income' : 'expense');
-      if (d.date) dateEl.value = d.date;
-      if (d.amount) amountEl.value = formatNumber(d.amount);
-      const okCat = setSel(categoryEl, d.category);
-      setSel(paymentEl, d.paymentMethod);
-      setSel(priorityEl, d.priority);
-      if (d.note) noteEl.value = d.note;
-      drawCatGrid(); drawPrio(); syncDayChips();
-      [dateEl, amountEl, paymentEl, noteEl, $('cat-grid')].forEach((el) => { el.classList.add('ai-filled'); setTimeout(() => el.classList.remove('ai-filled'), 2500); });
-      msg.textContent = (d.question ? '❓ ' + d.question + ' · ' : '') + (okCat ? '' : 'Chưa chọn được danh mục · ') + 'Kiểm tra lại rồi bấm "Lưu giao dịch".';
-    } catch (e) { msg.textContent = '⚠ ' + e.message; }
+      const okCat = applyDraft(d);
+      const q = missingQuestion(d, okCat);
+      ask(q);
+      status(q ? 'Còn thiếu 1 chút — trả lời câu hỏi bên dưới, hoặc tự chọn trong form.' : '✓ Đã điền — kiểm tra lại rồi bấm "Lưu giao dịch".');
+    } catch (e) { status('⚠ ' + e.message); }
     btn.disabled = false;
+  }
+
+  function clearImages() { images = []; $('ai-thumbs').innerHTML = ''; }
+  $('ai-fill').onclick = () => {
+    const text = textEl.value.trim();
+    // Có ảnh vừa chọn mà chưa gõ gì → đọc lại ảnh; gõ câu mới → bỏ ảnh cũ, đọc câu
+    if (images.length && !text) return runImage('');
+    if (!text) { status('Gõ hoặc nói 1 câu trước, vd "ăn sáng 35k tiền mặt".'); return; }
+    clearImages();
+    convo = { kind: 'parse', base: text };
+    scanBox.classList.add('hidden');
+    runParse(text);
   };
+  $('ai-ask-go').onclick = () => {
+    const a = askIn.value.trim(); if (!a || !convo) return;
+    convo.base = convo.base ? `${convo.base}. Bổ sung: ${a}` : a;
+    convo.kind === 'image' ? runImage(convo.base) : runParse(convo.base);
+  };
+
+  // ── Ảnh: thu nhỏ về ≤1600px JPEG trước khi gửi (ảnh điện thoại 5-10MB → ~300KB) ──
+  $('ai-photo').onclick = () => $('ai-file').click();
+  $('ai-file').onchange = async (e) => {
+    const files = [...e.target.files].slice(0, 4); e.target.value = '';
+    if (!files.length) return;
+    status('Đang chuẩn bị ảnh…');
+    try {
+      images = await Promise.all(files.map(shrink));
+      $('ai-thumbs').innerHTML = images.map((im) => `<img src="data:image/jpeg;base64,${im.b64}" alt="ảnh đính kèm">`).join('')
+        + '<button type="button" class="icon-btn" id="ai-thumbs-x" aria-label="Bỏ ảnh" title="Bỏ ảnh">✕</button>';
+      $('ai-thumbs-x').onclick = () => { clearImages(); scanBox.classList.add('hidden'); ask(''); status('Đã bỏ ảnh.'); };
+      textEl.value = '';          // ảnh mới = lượt mới, chữ của lượt trước không được gửi kèm
+      convo = { kind: 'image', base: '' };
+      runImage('');
+    } catch (err) { status('⚠ Không đọc được ảnh: ' + err.message); }
+  };
+  function shrink(file) {
+    return new Promise((resolve, reject) => {
+      const img = new Image();
+      img.onload = () => {
+        const k = Math.min(1, 1600 / Math.max(img.width, img.height));
+        const c = document.createElement('canvas'); c.width = Math.round(img.width * k); c.height = Math.round(img.height * k);
+        c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+        URL.revokeObjectURL(img.src);
+        resolve({ ext: 'jpg', b64: c.toDataURL('image/jpeg', 0.85).split(',')[1] });
+      };
+      img.onerror = () => reject(new Error('định dạng ảnh không hỗ trợ'));
+      img.src = URL.createObjectURL(file);
+    });
+  }
+
+  async function runImage(hint) {
+    const btn = $('ai-fill'); btn.disabled = true; ask(''); scanBox.classList.add('hidden');
+    msg.innerHTML = `<span class="thinking">AI đang đọc ${images.length} ảnh (10–40 giây)</span>`;
+    try {
+      const { scan } = await aiCall({ mode: 'image', images, text: hint || '' });
+      const items = (scan.items || []).filter((it) => it.amount > 0);
+      if (!items.length) {
+        ask(scan.question || 'Mình chưa đọc được khoản chi nào trong ảnh — ảnh này là gì, số tiền bao nhiêu?');
+        status('⚠ ' + (scan.summary || 'Không tìm thấy giao dịch trong ảnh.'));
+      } else if (items.length === 1) {
+        const okCat = applyDraft(items[0]);
+        const q = missingQuestion({ ...items[0], question: scan.question }, okCat);
+        ask(q);
+        status(`📷 ${scan.summary || 'Đã đọc ảnh'} — ${q ? 'còn thiếu 1 chút, trả lời bên dưới.' : 'kiểm tra rồi bấm "Lưu giao dịch".'}`);
+      } else {
+        showScanList(items, scan);
+      }
+    } catch (e) { status('⚠ ' + e.message); }
+    btn.disabled = false;
+  }
+
+  function validCat(it) {
+    const list = it.type === 'income' ? categories.income : categories.expense;
+    return list.some((c) => c.id === it.category);
+  }
+  function showScanList(items, scan) {
+    const name = (it) => (validCat(it) ? (it.type === 'income' ? categories.income : categories.expense).find((c) => c.id === it.category).name : null);
+    scanBox.innerHTML = `<div class="scan-head"><span>📷 ${esc(scan.summary || 'Ảnh có nhiều giao dịch')} — <b>${items.length} giao dịch</b></span></div>
+      ${items.map((it, i) => `<label class="scan-row">
+        <input type="checkbox" data-i="${i}" ${validCat(it) ? 'checked' : 'disabled'}>
+        <span class="tx-info"><b>${name(it) ? esc(name(it)) : '<span class="warn-cat">Chưa rõ danh mục</span>'}</b><span>${esc(it.date || '')} · ${esc(it.note || '')}</span></span>
+        <span class="tx-amt ${it.type === 'income' ? 'income' : 'expense'}">${it.type === 'income' ? '+' : '−'}${formatNumber(it.amount)}</span>
+        <button type="button" class="btn btn-sm btn-secondary" data-fill="${i}">Điền</button></label>`).join('')}
+      <div class="scan-foot"><span class="small muted" style="margin-right:auto;align-self:center">"Điền" để sửa từng khoản · hoặc lưu hết các khoản đã chọn</span>
+        <button type="button" class="btn btn-primary btn-sm" id="scan-save">Lưu các khoản đã chọn</button></div>`;
+    scanBox.classList.remove('hidden');
+    scanBox.querySelectorAll('[data-fill]').forEach((b) => { b.onclick = (e) => { e.preventDefault(); applyDraft(items[+b.dataset.fill]); status('✓ Đã điền 1 khoản — kiểm tra rồi bấm "Lưu giao dịch".'); $('tx-form').scrollIntoView({ behavior: 'smooth' }); }; });
+    $('scan-save').onclick = async () => {
+      const pick = [...scanBox.querySelectorAll('input[data-i]:checked')].map((c) => items[+c.dataset.i]);
+      if (!pick.length) { status('Chưa chọn khoản nào.'); return; }
+      const total = pick.reduce((s, it) => s + it.amount, 0);
+      if (!confirm(`Lưu ${pick.length} giao dịch, tổng ${formatNumber(total)}đ?`)) return;
+      $('scan-save').disabled = true;
+      try {
+        for (const it of pick) {   // tuần tự: mỗi lần ghi đọc lại file mới nhất, tránh xung đột
+          const tx = { id: genId(), date: it.date || todayDateStr(), type: it.type === 'income' ? 'income' : 'expense', category: it.category,
+            amount: it.amount, note: it.note || '', paymentMethod: categories.paymentMethods.some((p) => p.id === it.paymentMethod) ? it.paymentMethod : null };
+          if (tx.type === 'expense') tx.priority = categories.priorities.some((p) => p.id === it.priority) ? it.priority : 'nice';
+          await addTransaction(tx.date.slice(0, 7), tx);
+        }
+        toast(`Đã lưu ${pick.length} giao dịch`);
+        location.href = `transactions.html?month=${(pick[0].date || todayDateStr()).slice(0, 7)}`;
+      } catch (err) { showError(err); $('scan-save').disabled = false; }
+    };
+    status('Kiểm tra danh sách bên dưới.');
+  }
 }

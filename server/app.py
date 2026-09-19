@@ -198,7 +198,20 @@ PARSE_PROMPT = ("Chuyển câu mô tả giao dịch tiếng Việt thành JSON c
                 '"priority":"id or null","note":"ghi chú ngắn","confidence":"high|low","question":"nếu thiếu thông tin quan trọng thì 1 câu hỏi lại, không thì rỗng"}}')
 
 
-def _bridge(prompt: str) -> str:
+IMAGE_PROMPT = ("Đọc ảnh chi tiêu (hoá đơn, bill, ảnh chụp màn hình chuyển khoản/app ngân hàng/ví) cho sổ thu chi gia đình. "
+                "Hôm nay là {today}.\nDanh mục/phương thức hợp lệ (CHỈ dùng id trong danh sách):\n{cats}\n\n"
+                "{hint}Quy tắc: 1 hoá đơn mua hàng = 1 giao dịch (số TỔNG phải trả, liệt kê vài món chính vào note). "
+                "Ảnh lịch sử/sao kê có nhiều dòng = mỗi dòng 1 giao dịch. Tiền vào tài khoản = income. "
+                "Ngày trên ảnh đổi sang YYYY-MM-DD; không thấy ngày thì dùng hôm nay. Ảnh mờ/không phải chứng từ thì items rỗng và hỏi lại. "
+                "Reply ONLY JSON: "
+                '{{"items":[{{"type":"expense|income","date":"YYYY-MM-DD","amount":0,"category":"id","paymentMethod":"id or null",'
+                '"priority":"id or null","note":"ngắn: nơi mua + món chính"}}],"summary":"1 câu mô tả ảnh",'
+                '"question":"nếu thiếu thông tin quan trọng (vd không rõ trả bằng gì, số mờ) thì 1 câu hỏi lại, không thì rỗng"}}')
+
+
+def _bridge(prompt: str, images: list | None = None) -> str:
+    if images:  # cầu nối CT104 nhận ảnh qua phong bì JSON (19/09/2026)
+        prompt = json.dumps({"__bridge": 1, "prompt": prompt, "images": images})
     r = subprocess.run(["ssh", "-i", BRIDGE_KEY, "-o", "BatchMode=yes", "-o", "ConnectTimeout=15",
                         "-o", "StrictHostKeyChecking=accept-new", "-o", f"UserKnownHostsFile={Path(BRIDGE_KEY).parent / 'known_hosts'}",
                         BRIDGE_HOST], input=prompt, capture_output=True, text=True, timeout=600)
@@ -207,9 +220,13 @@ def _bridge(prompt: str) -> str:
     return r.stdout.strip()
 
 
-def _run_ai(jid: str, mode: str, text: str, history: list, who: str = "bạn", page: str = ""):
+def _run_ai(jid: str, mode: str, text: str, history: list, who: str = "bạn", page: str = "", images: list | None = None):
     try:
-        if mode == "parse":
+        if mode == "image":
+            hint = f"Người dùng ghi chú thêm: \"{text[:500]}\"\n" if text else ""
+            raw = _bridge(IMAGE_PROMPT.format(today=date.today().isoformat(), cats=_categories_brief(), hint=hint), images)
+            res = {"scan": json.loads(raw[raw.find("{"):raw.rfind("}") + 1])}
+        elif mode == "parse":
             raw = _bridge(PARSE_PROMPT.format(today=date.today().isoformat(), cats=_categories_brief(), text=text[:500]))
             res = {"draft": json.loads(raw[raw.find("{"):raw.rfind("}") + 1])}
         else:
@@ -232,8 +249,18 @@ async def ai_job(request: Request):
     email = require_access(request)
     body = await request.json()
     mode = body.get("mode")
-    if mode not in ("chat", "review", "parse"):
+    if mode not in ("chat", "review", "parse", "image"):
         raise HTTPException(400, "Chế độ AI không hợp lệ")
+    images = []
+    if mode == "image":
+        for im in (body.get("images") or [])[:4]:
+            ext = str(im.get("ext", "")).lower()
+            b64 = str(im.get("b64", ""))
+            if ext not in ("jpg", "jpeg", "png", "webp") or not b64 or len(b64) > 11_000_000:
+                raise HTTPException(400, "Ảnh không hợp lệ (chỉ JPG/PNG/WEBP, tối đa 8MB)")
+            images.append({"ext": ext, "b64": b64})
+        if not images:
+            raise HTTPException(400, "Chưa có ảnh")
     today = date.today().isoformat()
     if _ai_used["day"] != today:
         _ai_used.update(day=today, n=0)
@@ -246,7 +273,7 @@ async def ai_job(request: Request):
     jid = uuid.uuid4().hex[:12]
     _jobs[jid] = {"status": "running", "at": datetime.now()}
     threading.Thread(target=_run_ai, args=(jid, mode, str(body.get("text", "")), body.get("history") or [],
-                                                        NAMES.get(email, "bạn"), str(body.get("page", ""))), daemon=True).start()
+                                                        NAMES.get(email, "bạn"), str(body.get("page", "")), images), daemon=True).start()
     return {"job": jid, "left": AI_DAILY_LIMIT - _ai_used["n"]}
 
 

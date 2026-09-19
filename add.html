@@ -36,13 +36,21 @@
   </div>
 
   <section class="card ai-quick" id="ai-quick" style="margin-top:12px">
-    <label for="ai-text"><span data-ico="sparkle"></span>Nhập nhanh bằng câu nói</label>
+    <label for="ai-text"><span data-ico="sparkle"></span>Nhập nhanh bằng câu nói hoặc ảnh</label>
     <div class="ai-quick-row">
       <input type="text" id="ai-text" placeholder="VD: ăn sáng 35k tiền mặt hôm qua" />
-      <button type="button" class="icon-btn" id="ai-mic" aria-label="Nói"></button>
+      <button type="button" class="icon-btn" id="ai-mic" aria-label="Nói" aria-pressed="false"></button>
+      <button type="button" class="icon-btn" id="ai-photo" aria-label="Đọc ảnh hoá đơn / chuyển khoản"></button>
       <button type="button" class="btn btn-primary" id="ai-fill">Điền</button>
     </div>
-    <div class="small muted" id="ai-msg" style="margin-top:6px">AI điền sẵn các ô bên dưới — bạn xem lại rồi tự bấm Lưu.</div>
+    <input type="file" id="ai-file" accept="image/*" multiple hidden />
+    <div class="ai-thumbs" id="ai-thumbs"></div>
+    <div class="small muted" id="ai-msg" style="margin-top:6px" role="status" aria-live="polite">Gõ, bấm 🎤 để nói, hoặc 📷 chụp hoá đơn/ảnh chuyển khoản — AI điền sẵn, bạn xem lại rồi tự bấm Lưu.</div>
+    <div class="ai-ask hidden" id="ai-ask">
+      <div class="ai-ask-q"><span data-ico="sparkle"></span><b id="ai-ask-q"></b></div>
+      <div class="ai-quick-row"><input type="text" id="ai-ask-in" placeholder="Trả lời ở đây…" /><button type="button" class="icon-btn" id="ai-ask-mic" aria-label="Nói câu trả lời"></button><button type="button" class="btn btn-primary" id="ai-ask-go">Trả lời</button></div>
+    </div>
+    <div class="scan-list hidden" id="ai-scan"></div>
   </section>
 
   <form id="tx-form" class="card" style="margin-top:12px" novalidate>
