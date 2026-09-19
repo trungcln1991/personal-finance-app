@@ -1,4 +1,4 @@
-const CACHE_NAME = 'thu-chi-shell-v11';
+const CACHE_NAME = 'thu-chi-shell-v14';
 const SHELL_FILES = [
   './',
   './index.html',
@@ -38,7 +38,7 @@ self.addEventListener('fetch', (event) => {
     return;
   }
   event.respondWith(
-    fetch(event.request)
+    fetch(event.request, { cache: 'no-store' })
       .then((res) => {
         const resClone = res.clone();
         caches.open(CACHE_NAME).then((cache) => cache.put(event.request, resClone));

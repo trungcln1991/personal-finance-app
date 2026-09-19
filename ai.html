@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta name="color-scheme" content="dark" />
+<meta name="theme-color" content="#0b1120" />
+<title>Trợ lý AI — Sổ Thu Chi</title>
+<link rel="manifest" href="manifest.json" />
+<link rel="stylesheet" href="css/style.css" />
+</head>
+<body>
+<main>
+  <h1>🤖 Trợ lý tài chính</h1>
+  <p class="muted">Hỏi về sổ thu chi của nhà mình — AI đọc số liệu 3 tháng gần nhất và giao dịch tháng này. Chỉ trả lời dựa trên dữ liệu, không tự ghi gì vào sổ.</p>
+
+  <section class="card ai-actions">
+    <button class="btn btn-primary" id="btn-review">📊 Nhận xét tháng này</button>
+    <div class="ai-chips" id="chips"></div>
+  </section>
+
+  <section class="card">
+    <div id="chat" class="ai-chat"><p class="muted">Chọn câu hỏi gợi ý hoặc tự hỏi bên dưới.</p></div>
+    <form id="ask-form" class="ai-ask">
+      <textarea id="ask" rows="2" placeholder="VD: Tháng này tiền chợ tăng vì sao? Muốn tiết kiệm 3 triệu thì cắt ở đâu?"></textarea>
+      <div class="ai-ask-row"><span class="muted small" id="left"></span>
+        <div><button type="button" class="btn" id="mic" aria-label="Nói">🎤</button> <button class="btn btn-primary">Hỏi</button></div></div>
+    </form>
+  </section>
+</main>
+<script type="module" src="js/ai.js"></script>
+</body>
+</html>

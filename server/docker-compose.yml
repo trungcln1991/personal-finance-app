@@ -5,7 +5,7 @@ services:
     restart: unless-stopped
     # Chỉ nghe mạng nội bộ vmbr1 (không bind 0.0.0.0 ra LAN nhà)
     ports: ["10.10.10.107:8087:8000"]
-    volumes: ["/data/repo:/data/repo"]
+    volumes: ["/data/repo:/data/repo", "/opt/taichinh-keys:/keys"]
     env_file: [.env]
     environment:
       - TZ=Asia/Ho_Chi_Minh

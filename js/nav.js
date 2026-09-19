@@ -10,6 +10,7 @@ export function renderNav(active) {
   const items = [
     { href: 'index.html', label: 'Tổng quan', id: 'dashboard', icon: '📊' },
     { href: 'transactions.html', label: 'Giao dịch', id: 'transactions', icon: '📒' },
+    { href: 'ai.html', label: 'Trợ lý', id: 'ai', icon: '🤖' },
     { href: 'settings.html', label: 'Cài đặt', id: 'settings', icon: '⚙️' },
   ];
   const nav = document.createElement('nav');

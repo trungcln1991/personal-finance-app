@@ -10,8 +10,12 @@ aud, email) — phòng khi tunnel cấu hình nhầm thì cũng không ai đọc
 import base64
 import json
 import os
+import re
 import subprocess
 import threading
+import uuid
+from collections import defaultdict
+from datetime import date, datetime, timedelta
 from pathlib import Path
 
 import jwt
@@ -24,6 +28,10 @@ TEAM = os.getenv("CF_TEAM_DOMAIN", "https://trungcln.cloudflareaccess.com")
 AUD = os.getenv("CF_ACCESS_AUD", "")
 ALLOWED = {e.strip().lower() for e in os.getenv("ALLOWED_EMAILS", "").split(",") if e.strip()}
 DEV_NO_AUTH = os.getenv("DEV_NO_AUTH") == "1"  # chỉ dùng khi chạy thử trên máy dev
+
+BRIDGE_HOST = os.getenv("BRIDGE_HOST", "trungcln@10.10.10.104")
+BRIDGE_KEY = os.getenv("BRIDGE_KEY", "/keys/id_ed25519_bridge")
+AI_DAILY_LIMIT = int(os.getenv("AI_DAILY_LIMIT", "30"))
 
 app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
 _lock = threading.Lock()
@@ -110,9 +118,161 @@ async def put_contents(path: str, request: Request):
     return {"content": {"name": p.name, "path": path, "sha": blob_sha(p)}, "commit": {"sha": commit}}
 
 
+# ── AI: trợ lý tài chính (Claude qua cầu nối CT104, chạy nền vì Cloudflare cắt request > 100s) ──
+_ai_used = {"day": "", "n": 0}
+_jobs: dict = {}
+
+
+def _load(rel, default=None):
+    p = REPO / rel
+    try:
+        return json.loads(p.read_text(encoding="utf-8"))
+    except Exception:
+        return default
+
+
+def _month_keys(n=3):
+    d = date.today().replace(day=1); out = []
+    for _ in range(n):
+        out.append(d.strftime("%Y-%m")); d = (d - timedelta(days=1)).replace(day=1)
+    return out
+
+
+def _finance_context() -> str:
+    cats = _load("categories.json", {}) or {}
+    name = {("income", c["id"]): c["name"] for c in cats.get("income", [])}
+    name.update({("expense", c["id"]): c["name"] for c in cats.get("expense", [])})
+    pm = {p["id"]: p.get("name", p["id"]) for p in cats.get("paymentMethods", [])}
+    budget = _load("budget.json", {}) or {}
+    cur = date.today().strftime("%Y-%m")
+    lines = [f"Hôm nay: {date.today().isoformat()} (tháng {cur}, đã qua {date.today().day} ngày)."]
+    blines = []
+    for cid, b in (budget.get("categories") or {}).items():
+        vs = [v for v in b.get("versions", []) if v.get("from", "") <= cur]
+        if vs: blines.append(f"{b.get('name', cid)}: {vs[-1].get('monthlyAmount', 0):,}đ")
+    if blines: lines.append("Ngân sách tháng theo danh mục: " + "; ".join(blines))
+    for mk in _month_keys(3):
+        tx = _load(f"transactions/{mk}.json", []) or []
+        inc = sum(t.get("amount", 0) for t in tx if t.get("type") == "income")
+        exp = sum(t.get("amount", 0) for t in tx if t.get("type") == "expense")
+        by = defaultdict(int)
+        for t in tx:
+            if t.get("type") == "expense": by[name.get(("expense", t.get("category")), t.get("category"))] += t.get("amount", 0)
+        top = ", ".join(f"{k} {v:,}đ" for k, v in sorted(by.items(), key=lambda x: -x[1]))
+        lines.append(f"Tháng {mk}: thu {inc:,}đ · chi {exp:,}đ · {len(tx)} giao dịch. Chi theo danh mục: {top}")
+    tx = _load(f"transactions/{cur}.json", []) or []
+    lines.append(f"Chi tiết giao dịch tháng {cur} (ngày|loại|danh mục|số tiền|ghi chú|thanh toán):")
+    for t in sorted(tx, key=lambda t: t.get("date", ""))[-200:]:
+        lines.append(f"{t.get('date')}|{t.get('type')}|{name.get((t.get('type'), t.get('category')), t.get('category', ''))}|"
+                     f"{t.get('amount', 0):,}|{(t.get('note') or '')[:60]}|{pm.get(t.get('paymentMethod'), t.get('paymentMethod', ''))}")
+    return "\n".join(lines)[:30000]
+
+
+def _categories_brief() -> str:
+    cats = _load("categories.json", {}) or {}
+    return json.dumps({"income": [{"id": c["id"], "name": c["name"]} for c in cats.get("income", [])],
+                       "expense": [{"id": c["id"], "name": c["name"]} for c in cats.get("expense", [])],
+                       "paymentMethods": [{"id": p["id"], "name": p.get("name", p["id"])} for p in cats.get("paymentMethods", [])],
+                       "priorities": [{"id": p["id"], "name": p.get("name", p["id"])} for p in cats.get("priorities", [])]},
+                      ensure_ascii=False)
+
+
+ADVISOR = ("Bạn là cố vấn tài chính gia đình của Trung (Việt Nam). Dữ liệu dưới đây là sổ thu chi THẬT của gia đình. "
+           "Chỉ dựa trên dữ liệu, không bịa số. Trả lời tiếng Việt, ngắn gọn, có số cụ thể (định dạng 1.234.000đ), "
+           "Markdown gọn (tiêu đề nhỏ, gạch đầu dòng). Không khuyên đầu tư chứng khoán/crypto cụ thể. "
+           "Khi phù hợp, kết thúc bằng 1 việc làm được ngay.\n\nDỮ LIỆU:\n{ctx}\n\n{task}")
+REVIEW_TASK = ("Nhận xét tháng hiện tại, đúng 5 mục: **Tình hình** (thu/chi/số dư so với ngân sách, tốc độ chi theo số ngày đã qua) · "
+               "**Vượt/sắp vượt ngân sách** · **Khoản bất thường** (so với 2 tháng trước) · **Dự báo cuối tháng** (ngoại suy tuyến tính, nói rõ là ước tính) · "
+               "**3 việc nên làm** cụ thể.")
+PARSE_PROMPT = ("Chuyển câu mô tả giao dịch tiếng Việt thành JSON cho sổ thu chi. Hôm nay là {today}.\n"
+                "Danh mục/phương thức hợp lệ (CHỈ dùng id trong danh sách):\n{cats}\n\nCâu: \"{text}\"\n\n"
+                "Quy ước: 'k'=nghìn, 'tr'/'triệu'=triệu, 'lít'/'xị'=trăm nghìn; 'hôm qua','hôm kia','thứ 2 tuần này'… đổi ra ngày cụ thể. "
+                "Không rõ phương thức thì null. Reply ONLY JSON: "
+                '{{"type":"expense|income","date":"YYYY-MM-DD","amount":0,"category":"id","paymentMethod":"id or null",'
+                '"priority":"id or null","note":"ghi chú ngắn","confidence":"high|low","question":"nếu thiếu thông tin quan trọng thì 1 câu hỏi lại, không thì rỗng"}}')
+
+
+def _bridge(prompt: str) -> str:
+    r = subprocess.run(["ssh", "-i", BRIDGE_KEY, "-o", "BatchMode=yes", "-o", "ConnectTimeout=15",
+                        "-o", "StrictHostKeyChecking=accept-new", "-o", f"UserKnownHostsFile={Path(BRIDGE_KEY).parent / 'known_hosts'}",
+                        BRIDGE_HOST], input=prompt, capture_output=True, text=True, timeout=600)
+    if r.returncode != 0 or not r.stdout.strip():
+        raise RuntimeError("Không gọi được Claude (cầu nối CT104)")
+    return r.stdout.strip()
+
+
+def _run_ai(jid: str, mode: str, text: str, history: list):
+    try:
+        if mode == "parse":
+            raw = _bridge(PARSE_PROMPT.format(today=date.today().isoformat(), cats=_categories_brief(), text=text[:500]))
+            res = {"draft": json.loads(raw[raw.find("{"):raw.rfind("}") + 1])}
+        else:
+            if mode == "review":
+                task = REVIEW_TASK
+            else:
+                conv = "\n".join(f"{'Trung' if h.get('role') == 'user' else 'Cố vấn'}: {h.get('content', '')}" for h in history[-10:])
+                task = f"Hội thoại:\n{conv}\nTrung: {text[:2000]}\n\nTrả lời câu hỏi mới nhất của Trung."
+            res = {"text": _bridge(ADVISOR.format(ctx=_finance_context(), task=task))}
+        _jobs[jid] = {"status": "done", "result": res, "at": datetime.now()}
+    except Exception as e:  # noqa: BLE001
+        _ai_used["n"] = max(0, _ai_used["n"] - 1)  # lỗi thì hoàn lượt
+        _jobs[jid] = {"status": "error", "error": str(e)[:300], "at": datetime.now()}
+
+
+@app.post("/api/ai/job")
+async def ai_job(request: Request):
+    require_access(request)
+    body = await request.json()
+    mode = body.get("mode")
+    if mode not in ("chat", "review", "parse"):
+        raise HTTPException(400, "Chế độ AI không hợp lệ")
+    today = date.today().isoformat()
+    if _ai_used["day"] != today:
+        _ai_used.update(day=today, n=0)
+    if _ai_used["n"] >= AI_DAILY_LIMIT:
+        raise HTTPException(429, f"Đã dùng hết {AI_DAILY_LIMIT} lượt AI hôm nay")
+    _ai_used["n"] += 1
+    cutoff = datetime.now() - timedelta(hours=1)
+    for k in [k for k, v in _jobs.items() if v["at"] < cutoff]:
+        _jobs.pop(k, None)
+    jid = uuid.uuid4().hex[:12]
+    _jobs[jid] = {"status": "running", "at": datetime.now()}
+    threading.Thread(target=_run_ai, args=(jid, mode, str(body.get("text", "")), body.get("history") or []), daemon=True).start()
+    return {"job": jid, "left": AI_DAILY_LIMIT - _ai_used["n"]}
+
+
+@app.get("/api/ai/job/{jid}")
+def ai_job_status(jid: str, request: Request):
+    require_access(request)
+    j = _jobs.get(jid)
+    if not j:
+        raise HTTPException(404, "Không tìm thấy công việc AI — thử lại")
+    if j["status"] == "running":
+        return {"status": "running"}
+    _jobs.pop(jid, None)
+    if j["status"] == "error":
+        raise HTTPException(502, j["error"])
+    return {"status": "done", **j["result"]}
+
+
 @app.get("/api/health")
 def health():
     return {"ok": True, "head": git("rev-parse", "--short", "HEAD"), "commits": int(git("rev-list", "--count", "HEAD"))}
+
+
+def _asset_version() -> str:
+    # Hash toàn bộ file tĩnh → đổi code là đổi URL (?v=), Cloudflare/trình duyệt không giữ bản cũ được
+    import hashlib
+    h = hashlib.sha256()
+    for f in sorted(STATIC.rglob("*")):
+        if f.is_file():
+            h.update(f.read_bytes())
+    return h.hexdigest()[:10]
+
+
+ASSET_V = _asset_version()
+_REF_HTML = re.compile(r'((?:src|href)="(?:js|css)/[\w.-]+\.(?:js|css))"')
+_REF_JS = re.compile(r"""(from\s+'\./[\w.-]+\.js)'""")
 
 
 @app.get("/{path:path}")
@@ -124,5 +284,14 @@ def static(path: str):
         p = p / "index.html"
     if not p.is_file():
         p = STATIC / "index.html"
-    headers = {"Cache-Control": "no-cache"} if p.suffix in (".html", ".js", ".css", ".json") or p.name == "sw.js" else {}
+    if p.suffix in (".html", ".js") and p.name != "sw.js":
+        body = p.read_text(encoding="utf-8")
+        if p.suffix == ".html":
+            body = _REF_HTML.sub(rf'\1?v={ASSET_V}"', body)
+            media = "text/html; charset=utf-8"
+        else:
+            body = _REF_JS.sub(rf"\1?v={ASSET_V}'", body)
+            media = "text/javascript; charset=utf-8"
+        return Response(body, media_type=media, headers={"Cache-Control": "no-cache"})
+    headers = {"Cache-Control": "no-cache"} if p.suffix in (".css", ".json") or p.name == "sw.js" else {}
     return FileResponse(p, headers=headers)

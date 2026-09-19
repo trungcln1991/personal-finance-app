@@ -19,6 +19,16 @@
     <button type="button" id="type-transfer" class="transfer">Chuyển khoản</button>
   </div>
 
+  <section class="card ai-quick" id="ai-quick">
+    <label for="ai-text">✍️ Nhập nhanh bằng câu nói (AI điền giúp)</label>
+    <div class="ai-quick-row">
+      <input type="text" id="ai-text" placeholder="VD: ăn sáng 35k tiền mặt hôm qua" />
+      <button type="button" class="btn" id="ai-mic" aria-label="Nói">🎤</button>
+      <button type="button" class="btn btn-primary" id="ai-fill">Điền</button>
+    </div>
+    <div class="muted small" id="ai-msg"></div>
+  </section>
+
   <form id="tx-form">
     <div class="field">
       <label for="f-date">Ngày</label>

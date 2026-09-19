@@ -144,3 +144,30 @@ document.getElementById('tx-form').addEventListener('submit', async (e) => {
 });
 
 init();
+
+
+// ── Nhập nhanh bằng câu nói: AI điền sẵn form, người dùng xem lại rồi tự bấm Lưu ──
+import { aiCall, AI_AVAILABLE, listen as aiListen } from './ai-client.js';
+{
+  const box = document.getElementById('ai-quick'), msg = document.getElementById('ai-msg');
+  if (!AI_AVAILABLE || new URLSearchParams(location.search).get('id')) box.style.display = 'none';
+  const setSel = (el, v) => { if (v && [...el.options].some((o) => o.value === v)) { el.value = v; return true; } return false; };
+  document.getElementById('ai-mic').onclick = () => aiListen((t) => { document.getElementById('ai-text').value = t; });
+  document.getElementById('ai-fill').onclick = async () => {
+    const text = document.getElementById('ai-text').value.trim(); if (!text) return;
+    const btn = document.getElementById('ai-fill'); btn.disabled = true; msg.textContent = 'AI đang đọc câu của bạn…';
+    try {
+      const { draft: d } = await aiCall({ mode: 'parse', text });
+      if (d.type === 'income') btnIncome.click(); else btnExpense.click();
+      await new Promise((r) => setTimeout(r, 50));
+      if (d.date) dateEl.value = d.date;
+      if (d.amount) { amountEl.value = formatNumber(d.amount); }
+      const okCat = setSel(categoryEl, d.category);
+      setSel(paymentEl, d.paymentMethod); setSel(priorityEl, d.priority);
+      if (d.note) noteEl.value = d.note;
+      [dateEl, amountEl, categoryEl, paymentEl, noteEl].forEach((el) => { el.classList.add('ai-filled'); setTimeout(() => el.classList.remove('ai-filled'), 2500); });
+      msg.textContent = (d.question ? '❓ ' + d.question + ' · ' : '') + (okCat ? '' : 'Chưa chọn được danh mục · ') + 'Kiểm tra lại các ô rồi bấm "Lưu giao dịch".';
+    } catch (e) { msg.textContent = '⚠ ' + e.message; }
+    btn.disabled = false;
+  };
+}
