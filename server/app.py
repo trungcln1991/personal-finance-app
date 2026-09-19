@@ -82,6 +82,11 @@ async def login(request: Request):
     return {"token": "cf-access"}
 
 
+@app.get("/api/me")
+def me(request: Request):
+    return {"email": require_access(request)}
+
+
 @app.get("/api/contents/{path:path}")
 def get_contents(path: str, request: Request):
     require_access(request)

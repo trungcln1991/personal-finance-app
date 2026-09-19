@@ -1,4 +1,4 @@
-const CACHE_NAME = 'thu-chi-shell-v14';
+const CACHE_NAME = 'thu-chi-shell-v15';
 const SHELL_FILES = [
   './',
   './index.html',
@@ -14,6 +14,10 @@ const SHELL_FILES = [
   './js/add.js',
   './js/transactions.js',
   './js/settings.js',
+  './js/ui.js',
+  './js/ai.js',
+  './js/ai-client.js',
+  './ai.html',
   './manifest.json',
   './icons/icon.svg',
 ];
@@ -34,6 +38,8 @@ self.addEventListener('activate', (event) => {
 // (Cache-first từng khiến app kẹt bản cũ vĩnh viễn sau mỗi lần deploy code mới.)
 self.addEventListener('fetch', (event) => {
   const url = new URL(event.request.url);
+  if (url.origin !== location.origin) return; // font Google, API ngoài: để trình duyệt tự xử lý
+  if (event.request.method !== 'GET' || url.pathname.startsWith('/api/') || url.pathname.startsWith('/cdn-cgi/')) return;
   if (url.origin.includes('api.github.com') || url.hostname.includes('jsdelivr') || url.hostname.includes('workers.dev')) {
     return;
   }

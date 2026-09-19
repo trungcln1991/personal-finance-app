@@ -1,4 +1,7 @@
-import { renderNav, showError, clearError } from './nav.js';
+import { renderNav, showError, clearError, toast, getMe, getTheme, setTheme, isPrivate, setPrivate } from './nav.js';
+import { IS_LOCAL } from './config.js';
+import { hydrateIcons } from './ui.js';
+import { listAvailableMonths, loadTransactions } from './store.js';
 import { getToken, login, clearToken, testToken, hasToken } from './github-api.js';
 import {
   loadCategories, saveCategories, loadBudget, saveBudget, genId, formatNumber, formatVnd,
@@ -328,7 +331,7 @@ function wireBudgetEditPanel() {
   panel.querySelector('.be-save').addEventListener('click', async () => {
     const catId = editingBudgetCatId;
     const monthKey = panel.querySelector('.be-month').value;
-    if (!monthKey) { alert('Chọn tháng áp dụng.'); return; }
+    if (!monthKey) { toast('Chọn tháng áp dụng.'); return; }
     const amount = parseAmountInput(panel.querySelector('.be-amount').value);
     const thresholdPct = parseAmountInput(panel.querySelector('.be-threshold').value);
     const temporary = panel.querySelector('.be-scope-temp').checked;
@@ -413,7 +416,7 @@ function wireIncomeEditPanel() {
     const idx = categories.defaultIncomes.findIndex((d) => d.id === editingIncomeId);
     if (idx === -1) return;
     const monthKey = panel.querySelector('.ie-month').value;
-    if (!monthKey) { alert('Chọn tháng áp dụng.'); return; }
+    if (!monthKey) { toast('Chọn tháng áp dụng.'); return; }
     const temporary = panel.querySelector('.ie-scope-temp').checked;
     const amount = parseAmountInput(panel.querySelector('.ie-amount').value);
     const d = categories.defaultIncomes[idx];
@@ -479,3 +482,45 @@ async function init() {
 if (getToken()) {
   init().catch(showError);
 }
+
+// ── Tài khoản, giao diện, sao lưu (thêm 19/09/2026) ──
+hydrateIcons();
+if (IS_LOCAL) document.getElementById('legacy-login').hidden = true;
+else document.getElementById('account-card').hidden = true;
+getMe().then((me) => {
+  if (!me?.email) return;
+  document.getElementById('acc-email').textContent = me.email;
+  document.getElementById('acc-avatar').textContent = me.email[0];
+});
+
+const themePick = document.getElementById('theme-pick');
+const drawTheme = () => themePick.querySelectorAll('button').forEach((b) => b.classList.toggle('active', b.dataset.theme === getTheme()));
+themePick.querySelectorAll('button').forEach((b) => { b.onclick = () => { setTheme(b.dataset.theme); drawTheme(); }; });
+drawTheme();
+const privEl = document.getElementById('privacy-toggle');
+privEl.checked = isPrivate();
+privEl.onchange = () => setPrivate(privEl.checked);
+
+// Mở đúng mục khi vào từ link (settings.html#budget ...)
+if (location.hash) {
+  const target = document.querySelector(location.hash);
+  if (target?.tagName === 'DETAILS') { target.open = true; setTimeout(() => target.scrollIntoView({ block: 'start' }), 50); }
+}
+
+document.getElementById('backup-btn').addEventListener('click', async (e) => {
+  const btn = e.currentTarget; const status = document.getElementById('backup-status');
+  btn.disabled = true; status.textContent = 'Đang gom dữ liệu…';
+  try {
+    const months = await listAvailableMonths();
+    const [cat, bud, ...txs] = await Promise.all([loadCategories(), loadBudget(), ...months.map((m) => loadTransactions(m))]);
+    const dump = { exportedAt: new Date().toISOString(), categories: cat.categories, budget: bud.budget,
+      transactions: Object.fromEntries(months.map((m, i) => [m, txs[i].transactions])) };
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([JSON.stringify(dump, null, 2)], { type: 'application/json' }));
+    a.download = `so-thu-chi-backup-${new Date().toISOString().slice(0, 10)}.json`;
+    a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+    const n = txs.reduce((s, r) => s + r.transactions.length, 0);
+    status.textContent = `Đã tải ${months.length} tháng · ${n} giao dịch.`;
+  } catch (err) { showError(err); status.textContent = ''; }
+  btn.disabled = false;
+});

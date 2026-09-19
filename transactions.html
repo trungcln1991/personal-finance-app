@@ -2,48 +2,58 @@
 <html lang="vi">
 <head>
 <meta charset="UTF-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1" />
-<meta name="color-scheme" content="dark" />
-<meta name="theme-color" content="#0b1120" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<meta name="theme-color" content="#F5F6F8" media="(prefers-color-scheme: light)" />
+<meta name="theme-color" content="#0C1117" media="(prefers-color-scheme: dark)" />
+<script>try{var t=localStorage.getItem('theme');if(t)document.documentElement.dataset.theme=t}catch(e){}</script>
 <title>Giao dịch — Sổ Thu Chi</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:wght@400;500;600;700;800&display=swap" />
 <link rel="manifest" href="manifest.json" />
+<link rel="icon" href="icons/icon.svg" />
 <link rel="stylesheet" href="css/style.css" />
 </head>
 <body>
 <main>
-  <h1>Giao dịch</h1>
-
-  <div class="month-switcher" id="month-switcher">
-    <button id="prev-month">‹</button>
-    <strong id="month-label">—</strong>
-    <button id="next-month">›</button>
-  </div>
-  <p class="muted" id="range-label" style="display:none;"></p>
-
-  <div class="tx-filters">
-    <div class="tx-date-range">
-      <label>Từ ngày <input type="date" id="filter-from" /></label>
-      <label>Đến ngày <input type="date" id="filter-to" /></label>
+  <div class="page-head">
+    <div><span class="eyebrow" id="range-label">Sổ giao dịch</span><h1>Giao dịch</h1></div>
+    <div class="month-switcher" id="month-switcher">
+      <button id="prev-month" aria-label="Tháng trước"></button>
+      <strong id="month-label">—</strong>
+      <button id="next-month" aria-label="Tháng sau"></button>
     </div>
-    <select id="filter-type">
-      <option value="">Tất cả loại</option>
-      <option value="income">Thu</option>
-      <option value="expense">Chi</option>
-      <option value="transfer">Chuyển khoản</option>
-    </select>
-    <select id="filter-category"><option value="">Tất cả danh mục</option></select>
-    <select id="filter-payment"><option value="">Tất cả phương thức</option></select>
-    <select id="filter-priority"><option value="">Tất cả mức ưu tiên</option></select>
-    <input type="text" id="filter-note" placeholder="Tìm theo ghi chú…" />
-    <button id="filter-clear" class="btn btn-secondary">Xoá lọc</button>
   </div>
 
-  <div id="loading" class="muted">Đang tải…</div>
-  <div class="card tx-summary-card" id="filter-summary" style="display:none;">
-    <div class="tx-summary-meta" id="filter-summary-meta"></div>
-    <div class="tx-summary-grid" id="filter-summary-grid"></div>
+  <div class="toolbar">
+    <label class="search"><span data-ico="search"></span><input type="search" id="filter-note" placeholder="Tìm ghi chú, danh mục, số tiền…" aria-label="Tìm kiếm" /></label>
+    <button class="btn" id="filter-toggle" aria-expanded="false"><span data-ico="filter"></span>Bộ lọc <span class="badge hidden" id="filter-count"></span></button>
+    <button class="btn" id="export-csv"><span data-ico="download"></span>Xuất CSV</button>
   </div>
-  <div class="tx-list" id="tx-list"></div>
+
+  <div class="card filters-card hidden" id="filters-card" style="margin-bottom:12px">
+    <div class="filters">
+      <label>Loại<select id="filter-type"><option value="">Tất cả</option><option value="income">Thu</option><option value="expense">Chi</option><option value="transfer">Chuyển khoản</option></select></label>
+      <label>Danh mục<select id="filter-category"><option value="">Tất cả</option></select></label>
+      <label>Phương thức<select id="filter-payment"><option value="">Tất cả</option></select></label>
+      <label>Mức độ<select id="filter-priority"><option value="">Tất cả</option></select></label>
+      <label>Từ ngày<input type="date" id="filter-from" /></label>
+      <label>Đến ngày<input type="date" id="filter-to" /></label>
+    </div>
+    <div class="row" style="justify-content:space-between">
+      <span class="small muted">Chọn "Từ/Đến ngày" để xem nhiều tháng cùng lúc.</span>
+      <button id="filter-clear" class="btn btn-ghost btn-sm">Xoá lọc</button>
+    </div>
+  </div>
+
+  <div class="sum-strip" id="filter-summary">
+    <div><span>Thu</span><b class="pos money" id="s-in">0</b></div>
+    <div><span title="Kể cả chi bằng thẻ/ví trả sau">Tổng chi</span><b class="neg money" id="s-out">0</b></div>
+    <div><span id="s-net-l">Chênh lệch</span><b class="money" id="s-net">0</b></div>
+  </div>
+
+  <div id="loading"><div class="skel" style="height:64px;margin-bottom:10px"></div><div class="skel" style="height:220px"></div></div>
+  <div id="tx-list"></div>
 </main>
 <script type="module" src="js/transactions.js"></script>
 </body>

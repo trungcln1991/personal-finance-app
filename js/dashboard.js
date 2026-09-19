@@ -1,51 +1,81 @@
-import { renderNav, requireToken, showError } from './nav.js';
+import { renderNav, requireToken, showError, icon, toast, getMe, isPrivate, setPrivate } from './nav.js';
 import {
-  loadCategories, loadBudget, loadTransactions, saveTransactions, formatVnd, currentMonthKey, categoryName, categoryIcon,
+  loadCategories, loadBudget, loadTransactions, saveTransactions, formatVnd, currentMonthKey, categoryIcon,
   OWNERS, paymentType, normalizePaymentMethod, loadTransactionsRange, computeAccountBalances,
   shiftMonthKey, computeDebtStatus, addTransaction, genId, resolveVersioned,
-  formatNumber, parseAmountInput, attachAmountInput, todayDateStr, formatDateVn,
+  formatNumber, parseAmountInput, attachAmountInput, todayDateStr, formatDateVn, categoryName,
 } from './store.js';
+import { esc } from './ai-client.js';
+import { txRowHtml, openTxDetail, hydrateIcons } from './ui.js';
 
 renderNav('dashboard');
+hydrateIcons();
+document.getElementById('prev-month').innerHTML = icon('left');
+document.getElementById('next-month').innerHTML = icon('right');
 
-function monthLabel(monthKey) {
-  const [y, m] = monthKey.split('-');
-  return `Tháng ${Number(m)}/${y}`;
+const monthLabel = (mk) => { const [y, m] = mk.split('-'); return `Tháng ${Number(m)}/${y}`; };
+const shortMonth = (mk) => `T${Number(mk.slice(5))}`;
+const sum = (list) => list.reduce((s, t) => s + t.amount, 0);
+const $ = (id) => document.getElementById(id);
+
+// Lời chào theo giờ + tên người đăng nhập
+(() => {
+  const h = new Date().getHours();
+  const g = h < 11 ? 'Chào buổi sáng' : h < 14 ? 'Chào buổi trưa' : h < 18 ? 'Chào buổi chiều' : 'Chào buổi tối';
+  $('greet').textContent = g;
+  getMe().then((me) => {
+    const name = { 'trung.caolenam@gmail.com': 'Trung', 'lephuc1702@gmail.com': 'Phúc' }[me?.email];
+    if (name) $('greet').textContent = `${g}, ${name}`;
+  });
+})();
+
+const privBtn = $('privacy-btn');
+const drawPriv = () => { privBtn.innerHTML = icon(isPrivate() ? 'eyeOff' : 'eye'); };
+drawPriv();
+privBtn.onclick = () => { setPrivate(!isPrivate()); drawPriv(); };
+
+// "Chi" của 1 tháng = tiền thật ra khỏi túi: chi trả ngay (tiền mặt/ngân hàng)
+// + tiền trả nợ ví/thẻ. Chi bằng ví trả sau tháng này dồn sang "Nợ tháng sau".
+// Nhờ vậy Thu − Chi khớp tiền thật còn lại và không tính trùng khi trả nợ.
+function monthFlow(txs, debtIds) {
+  const income = txs.filter((t) => t.type === 'income');
+  const expense = txs.filter((t) => t.type === 'expense');
+  const deferred = expense.filter((t) => debtIds.has(t.paymentMethod));
+  const paidNow = expense.filter((t) => !debtIds.has(t.paymentMethod));
+  const debtPay = txs.filter((t) => t.type === 'transfer' && debtIds.has(t.toPayment));
+  return { income: sum(income), out: sum(paidNow) + sum(debtPay), deferred: sum(deferred), expenseList: expense };
 }
 
-let categoryChart, priorityChart;
+function deltaHtml(cur, prev, goodWhenUp) {
+  if (!prev) return '<span class="muted">Chưa có tháng trước để so</span>';
+  const pct = Math.round(((cur - prev) / prev) * 100);
+  if (pct === 0) return 'Bằng tháng trước';
+  const up = pct > 0;
+  const good = up === goodWhenUp;
+  return `<span class="${good ? 'pos' : 'neg'}">${up ? '▲' : '▼'} ${Math.abs(pct)}%</span> so với tháng trước`;
+}
 
 async function render(monthKey) {
-  document.getElementById('loading').style.display = 'block';
-  document.getElementById('content').style.display = 'none';
-  document.getElementById('month-label').textContent = monthLabel(monthKey);
+  $('loading').hidden = false;
+  $('content').hidden = true;
+  $('month-label').textContent = monthLabel(monthKey);
+  $('all-tx').href = `transactions.html?month=${monthKey}`;
 
   try {
     const [{ categories }, { budget }, { transactions, sha: txSha }] = await Promise.all([
-      loadCategories(),
-      loadBudget(),
-      loadTransactions(monthKey),
+      loadCategories(), loadBudget(), loadTransactions(monthKey),
     ]);
 
-    // Tự động thêm thu nhập mặc định (lương...) cho tháng hiện tại nếu chưa có,
-    // theo giá trị đang hiệu lực (versions) tại tháng đó. Chỉ áp dụng cho tháng thực tế hiện tại
-    // (không tự thêm khi bấm xem lại tháng cũ hoặc xem trước tháng tương lai).
+    // Tự thêm thu nhập mặc định (lương...) cho THÁNG HIỆN TẠI nếu chưa có, theo giá trị hiệu lực
+    // (versions) tại tháng đó. Không tự thêm khi xem lại tháng cũ hay xem trước tháng tương lai.
     if (monthKey === currentMonthKey() && categories.defaultIncomes?.length) {
-      const missing = categories.defaultIncomes.filter((d) => !transactions.some((t) => t.defaultIncomeId === d.id));
-      const newTx = missing
+      const newTx = categories.defaultIncomes
+        .filter((d) => !transactions.some((t) => t.defaultIncomeId === d.id))
         .map((d) => {
           const active = resolveVersioned(d.versions, monthKey);
           if (!active || !active.amount) return null;
-          return {
-            id: genId(),
-            date: `${monthKey}-01`,
-            type: 'income',
-            category: d.category,
-            amount: active.amount,
-            paymentMethod: d.paymentMethod || null,
-            note: d.name,
-            defaultIncomeId: d.id,
-          };
+          return { id: genId(), date: `${monthKey}-01`, type: 'income', category: d.category, amount: active.amount,
+            paymentMethod: d.paymentMethod || null, note: d.name, defaultIncomeId: d.id };
         })
         .filter(Boolean);
       if (newTx.length) {
@@ -56,270 +86,213 @@ async function render(monthKey) {
     }
 
     const allMethods = categories.paymentMethods.map(normalizePaymentMethod);
-    const debtMethodIds = new Set(allMethods.filter((p) => !paymentType(p.type).tracksBalance).map((p) => p.id));
+    const debtIds = new Set(allMethods.filter((p) => !paymentType(p.type).tracksBalance).map((p) => p.id));
 
-    // Mục "Chi" tính theo tiền thật ra khỏi túi trong tháng:
-    //   chi trả ngay (tiền mặt/ngân hàng) + tiền trả nợ ví/thẻ của tháng trước.
-    // Còn chi bằng ví trả sau tháng này chưa tốn đồng nào — dồn sang ô "Nợ tháng sau".
-    // Nhờ vậy Thu − Chi khớp với tiền thật còn lại, và không tính trùng khi trả nợ.
-    const income = transactions.filter((t) => t.type === 'income');
-    const expense = transactions.filter((t) => t.type === 'expense');
-    const deferredExpense = expense.filter((t) => debtMethodIds.has(t.paymentMethod));
-    const paidNowExpense = expense.filter((t) => !debtMethodIds.has(t.paymentMethod));
-    const debtPayments = transactions.filter((t) => t.type === 'transfer' && debtMethodIds.has(t.toPayment));
+    // Nạp 1 lần: từ mốc cấu hình sớm nhất (tính số dư/nợ) hoặc 5 tháng trước (biểu đồ), lấy cái sớm hơn.
+    const earliest = allMethods.flatMap((p) => [p.initialBalanceDate, p.openingDebtDate]).filter(Boolean).sort()[0];
+    const flowFrom = shiftMonthKey(monthKey, -5);
+    const fromMonth = earliest && earliest.slice(0, 7) < flowFrom ? earliest.slice(0, 7) : flowFrom;
+    const loaded = await loadTransactionsRange(fromMonth);
+    // Giao dịch tháng đang xem lấy từ bản vừa đọc (có thể vừa thêm lương tự động).
+    const allTx = [...loaded.filter((t) => t.date.slice(0, 7) !== monthKey), ...transactions];
 
-    const sum = (list) => list.reduce((s, t) => s + t.amount, 0);
-    const totalIncome = sum(income);
-    const totalDeferred = sum(deferredExpense);
-    const totalExpense = sum(paidNowExpense) + sum(debtPayments);
+    // ── 4 ô tổng ──
+    const cur = monthFlow(transactions, debtIds);
+    const prevMk = shiftMonthKey(monthKey, -1);
+    const prev = monthFlow(allTx.filter((t) => t.date.slice(0, 7) === prevMk), debtIds);
+    $('total-income').textContent = formatVnd(cur.income);
+    $('total-expense').textContent = formatVnd(cur.out);
+    $('total-deferred').textContent = formatVnd(cur.deferred);
+    $('d-income').innerHTML = deltaHtml(cur.income, prev.income, true);
+    $('d-expense').innerHTML = deltaHtml(cur.out, prev.out, false);
 
-    document.getElementById('total-income').textContent = formatVnd(totalIncome);
-    document.getElementById('total-expense').textContent = formatVnd(totalExpense);
-    document.getElementById('total-deferred').textContent = formatVnd(totalDeferred);
-
-    // Số dư tiền mặt & tài khoản, chia theo chủ sở hữu
-    const balanceGrid = document.getElementById('owner-balance-grid');
-    // Số dư tài khoản và nợ ví/thẻ đều cần lịch sử giao dịch từ mốc cấu hình sớm nhất — load 1 lần dùng chung.
-    const trackedAccounts = allMethods.filter((p) => paymentType(p.type).tracksBalance);
-    const earliestDate = allMethods
-      .flatMap((p) => [p.initialBalanceDate, p.openingDebtDate])
-      .filter(Boolean)
-      .sort()[0];
-    const allTx = earliestDate ? await loadTransactionsRange(earliestDate.slice(0, 7)) : [];
-    const accounts = computeAccountBalances(categories, allTx);
-
-    // "Còn lại" = tiền thật đang có: tự cộng tiền dư các tháng trước để lại, khỏi phải nhập tay
-    // số dư mỗi đầu tháng. Nhờ vậy nó luôn khớp với mục số dư tiền mặt & tài khoản bên dưới.
+    // "Còn lại" = tiền thật đang có tính đến hết tháng: tự cộng tiền dư các tháng trước.
     const carryOver = computeAccountBalances(categories, allTx.filter((t) => t.date < `${monthKey}-01`))
       .reduce((s, a) => s + (a.balance || 0), 0);
-    const balance = carryOver + totalIncome - totalExpense;
-    const balanceEl = document.getElementById('total-balance');
-    balanceEl.textContent = formatVnd(balance);
-    balanceEl.className = 'value ' + (balance >= 0 ? 'income-value' : 'expense-value');
+    const balance = carryOver + cur.income - cur.out;
+    $('total-balance').textContent = formatVnd(balance);
+    $('total-balance').className = 'kpi-value money ' + (balance >= 0 ? '' : 'neg');
+    $('carry-line').innerHTML = carryOver
+      ? `Gồm <b class="money">${formatVnd(carryOver)}</b> mang sang`
+      : 'Thu − Chi trong tháng';
 
-    const carryLine = document.getElementById('carry-line');
-    carryLine.innerHTML = carryOver
-      ? `<span>Đã gồm <b>${formatVnd(carryOver)}</b> mang sang từ tháng trước</span>
-         <span>· riêng tháng này thu chi chênh <b>${formatVnd(totalIncome - totalExpense)}</b></span>`
-      : '';
-    const ownerCards = OWNERS.map((o) => {
+    // ── Hero: tiền đang có hôm nay (không phụ thuộc tháng đang xem) ──
+    const accounts = computeAccountBalances(categories, allTx);
+    const cashNow = accounts.reduce((s, a) => s + (a.balance || 0), 0);
+    const debts = computeDebtStatus(categories, allTx, todayDateStr());
+    const debtNow = debts.reduce((s, d) => s + Math.max(0, d.totalDebt || 0), 0);
+    $('hero-cash').textContent = formatVnd(cashNow);
+    $('hero-debt').textContent = formatVnd(debtNow);
+    $('hero-net').textContent = formatVnd(cashNow - debtNow);
+    const dueSoon = debts.filter((d) => d.dueAmount > 0 && d.dueDate).sort((a, b) => (a.dueDate < b.dueDate ? -1 : 1))[0];
+    $('hero-sub').textContent = dueSoon
+      ? `${dueSoon.isOverdue ? '⚠ Quá hạn' : 'Sắp đến hạn'}: ${dueSoon.name} ${formatVnd(dueSoon.dueAmount)} · hạn ${formatDateVn(dueSoon.dueDate)}`
+      : `${accounts.length} tài khoản · cập nhật ${formatDateVn(todayDateStr())}`;
+
+    // ── Dòng tiền 6 tháng ──
+    const months = Array.from({ length: 6 }, (_, i) => shiftMonthKey(monthKey, i - 5));
+    const flows = months.map((mk) => ({ mk, ...monthFlow(allTx.filter((t) => t.date.slice(0, 7) === mk), debtIds) }));
+    const max = Math.max(1, ...flows.flatMap((f) => [f.income, f.out]));
+    $('flow').innerHTML = flows.map((f) => `
+      <div class="flow-col ${f.mk === monthKey ? 'sel' : ''}" data-mk="${f.mk}" role="button" tabindex="0" aria-label="${monthLabel(f.mk)}: thu ${formatVnd(f.income)}, chi ${formatVnd(f.out)}">
+        <div class="flow-bars"><span class="b-in" style="height:${(f.income / max) * 100}%"></span><span class="b-out" style="height:${(f.out / max) * 100}%"></span></div>
+        <div class="tip">${monthLabel(f.mk)}<br>Thu ${formatVnd(f.income)}<br>Chi ${formatVnd(f.out)}<br>Chênh ${f.income - f.out >= 0 ? '+' : ''}${formatVnd(f.income - f.out)}</div>
+      </div>`).join('');
+    $('flow-x').innerHTML = flows.map((f) => `<span class="${f.mk === monthKey ? 'sel' : ''}">${shortMonth(f.mk)}</span>`).join('');
+    $('flow').querySelectorAll('.flow-col').forEach((c) => {
+      const go = () => { if (c.dataset.mk !== monthKey) { cur_mk = c.dataset.mk; render(cur_mk); } };
+      c.onclick = go; c.onkeydown = (e) => { if (e.key === 'Enter') go(); };
+    });
+    const withData = flows.filter((f) => f.income || f.out);
+    const avgOut = withData.length ? withData.reduce((s, f) => s + f.out, 0) / withData.length : 0;
+    $('flow-note').textContent = withData.length
+      ? `Trung bình chi ${formatVnd(Math.round(avgOut))}/tháng · ${withData.filter((f) => f.income >= f.out).length}/${withData.length} tháng thu ≥ chi. Bấm vào cột để xem tháng đó.`
+      : 'Chưa có dữ liệu.';
+
+    // ── Tài khoản theo chủ sở hữu ──
+    const groups = OWNERS.map((o) => {
       const list = accounts.filter((a) => (a.owner || 'shared') === o.id);
       if (!list.length) return '';
       const total = list.reduce((s, a) => s + (a.balance || 0), 0);
-      const rows = list
-        .map(
-          (a) => `
-        <div class="account-row">
-          <span class="acc-name">${paymentType(a.type).icon} ${a.name}</span>
-          <span class="acc-balance ${a.balance === null ? 'unset' : ''}">${a.balance === null ? 'Chưa cấu hình' : formatVnd(a.balance)}</span>
-        </div>`
-        )
-        .join('');
-      return `
-        <div class="card owner-card">
-          <div class="owner-title">${o.label}</div>
-          <div class="owner-total">${formatVnd(total)}</div>
-          ${rows}
-        </div>`;
+      return `<div class="owner-group"><div class="owner-head"><span>${o.label}</span><span class="money">${formatVnd(total)}</span></div>
+        ${list.map((a) => `<div class="acct"><span class="cat-ico">${paymentType(a.type).icon}</span>
+          <span class="acct-name"><b>${esc(a.name)}</b><span>${paymentType(a.type).label}</span></span>
+          <span class="acct-bal money">${a.balance === null ? '<span class="badge warn">Chưa cấu hình</span>' : formatVnd(a.balance)}</span></div>`).join('')}</div>`;
     }).join('');
-    balanceGrid.innerHTML = ownerCards || '<p class="muted">Chưa có tài khoản tiền mặt/ngân hàng nào. Vào Cài đặt để thêm.</p>';
+    $('owner-balance-grid').innerHTML = groups || '<p class="muted">Chưa có tài khoản tiền mặt/ngân hàng. <a href="settings.html#payment">Thêm ngay</a></p>';
 
-    // Thẻ tín dụng & ví trả sau: nợ phải trả (tháng đã đóng) + phát sinh tháng này (chưa đến hạn)
-    const cwCard = document.getElementById('credit-wallet-card');
-    const cwMethodsRaw = allMethods.filter((p) => !paymentType(p.type).tracksBalance);
-    const todayMonthKey = currentMonthKey();
-    if (!cwMethodsRaw.length) {
-      cwCard.innerHTML = '<p class="muted">Chưa có thẻ tín dụng/ví trả sau nào. Vào Cài đặt để thêm.</p>';
-    } else {
-      const cwMethods = computeDebtStatus(categories, allTx, todayDateStr());
-      const payAccounts = trackedAccounts;
-      const cwRows = cwMethods
-        .map((p) => {
-          const dueLabel = p.dueDate ? ` (hạn ${formatDateVn(p.dueDate)}${p.isOverdue ? ' — ĐÃ QUÁ HẠN' : ''})` : '';
-          const currentLabel = p.dueDate ? 'Phát sinh kỳ hiện tại (chưa chốt sao kê)' : 'Phát sinh tháng này (chưa đến hạn)';
-          const debtInfo = !p.configured
-            ? '<p class="muted">Chưa cấu hình nợ — vào Cài đặt để thiết lập.</p>'
-            : `
-              <div class="cw-debt-rows">
-                <span class="owed${p.isOverdue ? ' overdue' : ''}">Nợ đến hạn phải trả: ${formatVnd(p.dueAmount)}${dueLabel}</span>
-                <span>${currentLabel}: ${formatVnd(p.currentMonthSpend)}</span>
-                <span>Tổng nợ: ${formatVnd(p.totalDebt)} · đã trả ${formatVnd(p.paidAmount)}</span>
-              </div>`;
-          // Trả nợ = nhập đúng số tiền thực trả (mặc định điền sẵn phần đến hạn), cho phép trả một phần.
-          const suggested = p.dueAmount > 0 ? p.dueAmount : p.totalDebt;
-          const payRow = p.canPay && payAccounts.length
-            ? `
-              <div class="cw-pay-row" data-method="${p.id}">
-                <input type="text" inputmode="numeric" class="cw-pay-amount" value="${formatNumber(suggested)}" />
-                <select class="cw-pay-account">${payAccounts.map((a) => `<option value="${a.id}">${a.name}</option>`).join('')}</select>
-                <button class="cw-pay-btn">Ghi nhận trả nợ</button>
-              </div>`
-            : '';
-          return `
-            <div class="cw-row">
-              <span>${paymentType(p.type).icon} ${p.name}<span class="cw-badge">${paymentType(p.type).label}</span></span>
-            </div>
-            ${debtInfo}
-            ${payRow}`;
-        })
-        .join('');
-      cwCard.innerHTML = cwRows;
+    // ── Thẻ tín dụng & ví trả sau (sổ nợ) ──
+    renderDebts(debts, accounts, monthKey);
 
-      cwCard.querySelectorAll('.cw-pay-row').forEach((row) => {
-        const amountEl = row.querySelector('.cw-pay-amount');
-        attachAmountInput(amountEl);
-        row.querySelector('.cw-pay-btn').addEventListener('click', async () => {
-          const methodId = row.dataset.method;
-          const amount = parseAmountInput(amountEl.value);
-          const fromPayment = row.querySelector('.cw-pay-account').value;
-          const method = cwMethods.find((m) => m.id === methodId);
-          if (!amount) {
-            alert('Nhập số tiền đã trả.');
-            return;
-          }
-          const remaining = method.totalDebt - amount;
-          const remainingNote = remaining > 0 ? `Còn nợ ${formatVnd(remaining)}.` : 'Hết nợ.';
-          if (!confirm(`Ghi nhận trả ${formatVnd(amount)} cho ${method?.name || ''}? ${remainingNote}`)) return;
-          try {
-            await addTransaction(todayMonthKey, {
-              id: genId(),
-              date: new Date().toISOString().slice(0, 10),
-              type: 'transfer',
-              fromPayment,
-              toPayment: methodId,
-              amount,
-              note: `Trả nợ ${method?.name || ''}`,
-            });
-            render(monthKey);
-          } catch (err) {
-            showError(err);
-          }
-        });
-      });
+    // ── Chi theo danh mục & ngân sách (gộp 1 bảng) ──
+    const byCat = {};
+    for (const t of cur.expenseList) byCat[t.category] = (byCat[t.category] || 0) + t.amount;
+    const totalExp = Object.values(byCat).reduce((a, b) => a + b, 0);
+    const budgets = Object.entries(budget.categories || {})
+      .map(([id, cfg]) => [id, { cfg, active: resolveVersioned(cfg.versions, monthKey) }])
+      .filter(([, b]) => b.active);
+    const bMap = Object.fromEntries(budgets);
+    const catIds = [...new Set([...Object.keys(byCat), ...budgets.map(([id]) => id)])]
+      .sort((a, b) => (byCat[b] || 0) - (byCat[a] || 0));
+    const dayOfMonth = monthKey === currentMonthKey() ? new Date().getDate() : null;
+    const daysIn = new Date(Number(monthKey.slice(0, 4)), Number(monthKey.slice(5)), 0).getDate();
+    $('cat-list').innerHTML = catIds.length ? catIds.map((id) => {
+      const spent = byCat[id] || 0;
+      const b = bMap[id];
+      const name = b?.cfg.name || categoryName(categories, 'expense', id);
+      let bar, sub;
+      if (b) {
+        const limit = b.active.monthlyAmount || 0;
+        const pct = limit ? spent / limit : 0;
+        const cls = pct >= 1 ? 'over' : pct >= (b.cfg.alertThreshold ?? 0.9) ? 'warn' : '';
+        bar = `<div class="bar"><i class="${cls}" style="width:${Math.min(pct, 1) * 100}%"></i></div>`;
+        const left = limit - spent;
+        sub = left >= 0 ? `còn ${formatVnd(left)} / ${formatVnd(limit)}` : `vượt ${formatVnd(-left)} / ${formatVnd(limit)}`;
+        // Dự báo: tháng hiện tại, tiêu theo nhịp hiện tại thì cuối tháng có vượt không
+        if (dayOfMonth && left >= 0 && spent > 0 && (spent / dayOfMonth) * daysIn > limit * 1.05) sub += ' · <span class="neg">nhịp này sẽ vượt</span>';
+      } else {
+        bar = `<div class="bar"><i style="width:${totalExp ? (spent / totalExp) * 100 : 0}%;background:var(--text-2);opacity:.45"></i></div>`;
+        sub = 'chưa đặt ngân sách';
+      }
+      return `<div class="rank-row"><span class="cat-ico">${categoryIcon(id)}</span>
+        <div class="rank-body"><div class="rank-top"><span class="rank-name">${esc(name)}</span><b class="money">${formatVnd(spent)}</b></div>${bar}
+        <div class="rank-sub"><span>${sub}</span><span>${totalExp ? Math.round((spent / totalExp) * 100) : 0}% tổng chi</span></div></div></div>`;
+    }).join('') : '<div class="empty"><div class="big">🧾</div>Chưa có khoản chi nào tháng này.</div>';
+
+    // Cảnh báo vượt ngân sách
+    const overRows = budgets.map(([id, b]) => ({ name: b.cfg.name || id, icon: categoryIcon(id), over: (byCat[id] || 0) - b.active.monthlyAmount }))
+      .filter((r) => r.over > 0).sort((a, b) => b.over - a.over);
+    $('over-budget-card').hidden = !overRows.length;
+    if (overRows.length) {
+      $('over-title').textContent = `${overRows.length} mục vượt ngân sách · tổng ${formatVnd(overRows.reduce((s, r) => s + r.over, 0))}`;
+      $('over-budget-list').innerHTML = overRows.map((r) => `<div class="over-row"><span>${r.icon} ${esc(r.name)}</span><span class="money">+${formatVnd(r.over)}</span></div>`).join('');
     }
 
-    // Chi theo danh mục
-    const byCategory = {};
-    for (const t of expense) byCategory[t.category] = (byCategory[t.category] || 0) + t.amount;
-    const catEntries = Object.entries(byCategory).sort((a, b) => b[1] - a[1]);
-    const catLabels = catEntries.map(([id]) => categoryName(categories, 'expense', id));
-    const catValues = catEntries.map(([, v]) => v);
+    // ── Mức độ cần thiết ──
+    const P = [['essential', 'Bắt buộc'], ['nice', 'Có thì tốt'], ['unnecessary', 'Không cần thiết']];
+    const byP = { essential: 0, nice: 0, unnecessary: 0 };
+    for (const t of cur.expenseList) byP[t.priority || 'nice'] = (byP[t.priority || 'nice'] || 0) + t.amount;
+    $('priority-card').innerHTML = totalExp ? `
+      <div class="stack-bar">${P.map(([k]) => byP[k] ? `<i class="p-${k}" style="width:${(byP[k] / totalExp) * 100}%"></i>` : '').join('')}</div>
+      <div class="stack-legend">${P.map(([k, l]) => `<div><i class="p-${k}"></i>${l}<span class="muted">${Math.round((byP[k] / totalExp) * 100)}%</span><b class="money">${formatVnd(byP[k])}</b></div>`).join('')}</div>
+      ${byP.unnecessary ? `<p class="small muted" style="margin:10px 0 0">Cắt được phần "Không cần thiết" là dư thêm ${formatVnd(byP.unnecessary)} tháng này.</p>` : ''}`
+      : '<p class="muted" style="margin:0">Chưa có khoản chi.</p>';
 
-    categoryChart?.destroy();
-    categoryChart = new Chart(document.getElementById('chart-category'), {
-      type: 'doughnut',
-      data: {
-        labels: catLabels.length ? catLabels : ['Chưa có chi tiêu'],
-        datasets: [{
-          data: catValues.length ? catValues : [1],
-          backgroundColor: ['#6366f1','#22c55e','#f59e0b','#ef4444','#06b6d4','#a855f7','#eab308','#f97316','#14b8a6','#ec4899','#84cc16','#64748b'],
-        }],
-      },
-      options: { plugins: { legend: { position: 'bottom', labels: { color: '#e2e8f0', boxWidth: 12, font: { size: 11 } } } } },
+    // ── Giao dịch gần đây ──
+    const recent = [...transactions].sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0)).slice(0, 6);
+    $('recent').innerHTML = recent.length ? recent.map((t) => txRowHtml(t, categories, { showDate: true })).join('')
+      : '<div class="empty">Chưa có giao dịch. <a href="add.html">Thêm giao dịch đầu tiên</a></div>';
+    $('recent').querySelectorAll('.tx-item').forEach((el) => {
+      el.onclick = () => openTxDetail(transactions.find((t) => t.id === el.dataset.id), categories, () => render(monthKey));
     });
 
-    // Chi theo mức ưu tiên
-    const priorityOrder = ['essential', 'nice', 'unnecessary'];
-    const priorityLabels = { essential: 'Bắt buộc', nice: 'Có thì tốt', unnecessary: 'Không cần thiết' };
-    const byPriority = { essential: 0, nice: 0, unnecessary: 0 };
-    for (const t of expense) byPriority[t.priority || 'nice'] += t.amount;
-
-    priorityChart?.destroy();
-    priorityChart = new Chart(document.getElementById('chart-priority'), {
-      type: 'bar',
-      data: {
-        labels: priorityOrder.map((k) => priorityLabels[k]),
-        datasets: [{
-          data: priorityOrder.map((k) => byPriority[k]),
-          backgroundColor: ['#22c55e', '#f59e0b', '#ef4444'],
-        }],
-      },
-      options: {
-        plugins: { legend: { display: false } },
-        scales: {
-          x: { ticks: { color: '#94a3b8' }, grid: { display: false } },
-          y: { ticks: { color: '#94a3b8' }, grid: { color: '#273449' } },
-        },
-      },
-    });
-
-    // Ngân sách tháng (lấy giá trị đang hiệu lực tại monthKey, xem tháng cũ vẫn đúng số lúc đó)
-    const budgetCategories = budget.categories || {};
-    const rows = Object.entries(budgetCategories)
-      .map(([catId, cfg]) => [catId, cfg, resolveVersioned(cfg.versions, monthKey)])
-      .filter(([, , active]) => active);
-    const budgetList = document.getElementById('budget-list');
-    if (!rows.length) {
-      budgetList.innerHTML = '<p class="muted">Chưa cấu hình ngân sách. Vào Cài đặt để thêm.</p>';
-    } else {
-      budgetList.innerHTML = rows
-        .map(([catId, cfg, active]) => {
-          const spent = byCategory[catId] || 0;
-          const pct = active.monthlyAmount > 0 ? spent / active.monthlyAmount : 0;
-          const cls = pct >= 1 ? 'over' : pct >= (cfg.alertThreshold ?? 0.9) ? 'warn' : '';
-          return `
-            <div class="budget-row">
-              <div class="row-top">
-                <span>${categoryIcon(catId)} ${cfg.name || catId}</span>
-                <span>${formatVnd(spent)} / ${formatVnd(active.monthlyAmount)}</span>
-              </div>
-              <div class="progress-bar"><div class="progress-fill ${cls}" style="width:${Math.min(pct, 1) * 100}%"></div></div>
-            </div>`;
-        })
-        .join('');
-    }
-
-    // Các danh mục tiêu quá ngân sách — liệt kê riêng lên đầu, vượt nhiều nhất trước.
-    const overRows = rows
-      .map(([catId, cfg, active]) => ({
-        name: cfg.name || catId,
-        icon: categoryIcon(catId),
-        spent: byCategory[catId] || 0,
-        budgetAmount: active.monthlyAmount,
-        over: (byCategory[catId] || 0) - active.monthlyAmount,
-      }))
-      .filter((r) => r.over > 0)
-      .sort((a, b) => b.over - a.over);
-    const overCard = document.getElementById('over-budget-card');
-    if (!overRows.length) {
-      overCard.style.display = 'none';
-    } else {
-      overCard.style.display = 'block';
-      const totalOver = overRows.reduce((s, r) => s + r.over, 0);
-      document.getElementById('over-budget-list').innerHTML = `
-        ${overRows
-          .map(
-            (r) => `
-          <div class="over-row">
-            <span class="over-name">${r.icon} ${r.name}</span>
-            <span class="over-detail">${formatVnd(r.spent)} / ${formatVnd(r.budgetAmount)}</span>
-            <span class="over-amount">vượt ${formatVnd(r.over)}</span>
-          </div>`
-          )
-          .join('')}
-        <div class="over-total">Tổng vượt ${overRows.length} mục: ${formatVnd(totalOver)}</div>`;
-    }
-
-    document.getElementById('loading').style.display = 'none';
-    document.getElementById('content').style.display = 'block';
+    $('loading').hidden = true;
+    $('content').hidden = false;
   } catch (err) {
-    document.getElementById('loading').style.display = 'none';
+    $('loading').hidden = true;
     showError(err);
   }
 }
 
-let monthKey = currentMonthKey();
+function renderDebts(debts, payAccounts, monthKey) {
+  const box = $('credit-wallet-card');
+  if (!debts.length) {
+    box.innerHTML = '<p class="muted" style="margin:0">Chưa có thẻ tín dụng/ví trả sau. <a href="settings.html#payment">Thêm</a></p>';
+    return;
+  }
+  box.innerHTML = debts.map((p) => {
+    const t = paymentType(p.type);
+    if (!p.configured) {
+      return `<div class="debt"><div class="debt-top"><span class="cat-ico">${t.icon}</span><span class="acct-name"><b>${esc(p.name)}</b><span>${t.label}</span></span>
+        <a class="badge warn" href="settings.html#payment">Chưa cấu hình nợ</a></div></div>`;
+    }
+    const badge = p.isOverdue ? '<span class="badge danger">Quá hạn</span>'
+      : p.dueAmount > 0 ? `<span class="badge warn">Hạn ${formatDateVn(p.dueDate) || 'tháng này'}</span>`
+      : p.totalDebt <= 0 ? '<span class="badge good">Hết nợ</span>' : '';
+    const suggested = p.dueAmount > 0 ? p.dueAmount : p.totalDebt;
+    return `<div class="debt" data-method="${esc(p.id)}">
+      <div class="debt-top"><span class="cat-ico">${t.icon}</span><span class="acct-name"><b>${esc(p.name)}</b><span>Tổng nợ <span class="money">${formatVnd(p.totalDebt)}</span></span></span>${badge}</div>
+      <div class="debt-meta">
+        <div class="${p.isOverdue ? 'overdue' : 'due'}"><span>Đến hạn phải trả</span><b class="money">${formatVnd(p.dueAmount)}</b></div>
+        <div><span>${p.dueDate ? 'Kỳ hiện tại (chưa chốt)' : 'Phát sinh tháng này'}</span><b class="money">${formatVnd(p.currentMonthSpend)}</b></div>
+      </div>
+      ${p.canPay && payAccounts.length ? `<div class="pay-row">
+        <input type="text" inputmode="numeric" class="cw-pay-amount" value="${formatNumber(suggested)}" aria-label="Số tiền trả" />
+        <select class="cw-pay-account" aria-label="Trả từ tài khoản">${payAccounts.map((a) => `<option value="${esc(a.id)}">${esc(a.name)}</option>`).join('')}</select>
+        <button class="btn btn-secondary cw-pay-btn">Ghi nhận trả nợ</button></div>` : ''}
+    </div>`;
+  }).join('');
 
-document.getElementById('prev-month').addEventListener('click', () => {
-  monthKey = shiftMonthKey(monthKey, -1);
-  render(monthKey);
-});
-document.getElementById('next-month').addEventListener('click', () => {
-  monthKey = shiftMonthKey(monthKey, 1);
-  render(monthKey);
-});
+  box.querySelectorAll('.pay-row').forEach((row) => {
+    const wrap = row.closest('.debt');
+    const amountEl = row.querySelector('.cw-pay-amount');
+    attachAmountInput(amountEl);
+    row.querySelector('.cw-pay-btn').addEventListener('click', async (e) => {
+      const method = debts.find((m) => m.id === wrap.dataset.method);
+      const amount = parseAmountInput(amountEl.value);
+      if (!amount) { toast('Nhập số tiền đã trả'); return; }
+      const remaining = method.totalDebt - amount;
+      if (!confirm(`Ghi nhận trả ${formatVnd(amount)} cho ${method.name}? ${remaining > 0 ? `Còn nợ ${formatVnd(remaining)}.` : 'Hết nợ.'}`)) return;
+      e.currentTarget.disabled = true;
+      try {
+        const today = todayDateStr();
+        await addTransaction(today.slice(0, 7), {
+          id: genId(), date: today, type: 'transfer',
+          fromPayment: row.querySelector('.cw-pay-account').value, toPayment: method.id,
+          amount, note: `Trả nợ ${method.name}`,
+        });
+        toast('Đã ghi nhận trả nợ');
+        render(monthKey);
+      } catch (err) { showError(err); e.currentTarget.disabled = false; }
+    });
+  });
+}
+
+let cur_mk = new URLSearchParams(location.search).get('month') || currentMonthKey();
+$('prev-month').addEventListener('click', () => { cur_mk = shiftMonthKey(cur_mk, -1); render(cur_mk); });
+$('next-month').addEventListener('click', () => { cur_mk = shiftMonthKey(cur_mk, 1); render(cur_mk); });
 
 (async () => {
   if (!(await requireToken())) return;
-  render(monthKey);
+  render(cur_mk);
 })();
