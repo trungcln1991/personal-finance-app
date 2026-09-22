@@ -444,6 +444,12 @@ async function handleUserText(text, hidden = false) {
   state.turns.push({ role: 'assistant', content: a.say || '…', detail: a.detail || '',
     ...(memoData && ['create', 'update'].includes(a.intent) ? { memo: JSON.stringify(memoData).slice(0, 1500) } : {}) });
   let spoken = a.say;
+  // AI đôi khi hỏi "Lưu nhé?" nhưng quên đặt ready=true → draft đã đủ + đang hỏi xác nhận thì coi như ready
+  if (!a.ready && ['create', 'update'].includes(a.intent) && cats && /(lưu|ghi|cập nhật|thêm)\s*(nhé|nha|không|ko|chứ)\s*\?/i.test(a.say || '')) {
+    const d = Array.isArray(a.items) && a.items.length > 1 ? null : a.draft;
+    const r = d && normalize(d, {});
+    if (r?.tx && (r.tx.type === 'transfer' || r.tx.paymentMethod)) a.ready = true;
+  }
   if (a.ready && ['create', 'update', 'delete'].includes(a.intent) && cats) {
     const card = await buildCard(a).catch((e) => ({ err: e.message }));
     if (card?.err) {
