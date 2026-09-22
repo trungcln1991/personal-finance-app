@@ -2,9 +2,10 @@
 //  🎙 GIAO TIẾP: mic mở suốt, ngừng nói ~1,5s là tự gửi, AI đọc to rồi tự nghe tiếp; im lặng 8s → tự hỏi lại
 //     kèm thông tin đã có; 2 lần không đáp → tạm dừng. Nói "lưu/ok" là tự ghi; im lặng thì KHÔNG BAO GIỜ tự lưu.
 //  💬 CHAT: gõ (hoặc đọc chính tả vào ô), bấm Gửi; không đọc to.
+// 📷 Gửi ảnh hoá đơn/chuyển khoản (nút ảnh, dán Ctrl+V, kéo thả): AI đọc ra 1 hoặc nhiều giao dịch → thẻ xác nhận.
 // Làm được: TẠO / SỬA / XOÁ giao dịch và TRA CỨU. AI chỉ ĐỀ XUẤT (JSON) → app kiểm dữ liệu + thẻ xác nhận
 // → chỉ khi người dùng đồng ý APP mới ghi (cùng đường ghi như form → mỗi lần = 1 commit git).
-import { aiCall, AI_AVAILABLE, md, esc, listen } from './ai-client.js';
+import { aiCall, AI_AVAILABLE, md, esc, listen, shrinkImage } from './ai-client.js';
 import { createVoiceLoop } from './voice.js';
 import {
   loadCategories, loadTransactions, addTransaction, updateTransaction, deleteTransaction, genId,
@@ -14,6 +15,7 @@ import {
 const KEY = 'ai-drawer';
 const MODE_KEY = 'ai-mode';
 const SILENCE_REPROMPT_MS = 8000;
+const MAX_IMAGES = 4;
 const MAX_REPROMPTS = 2;
 const DEFAULT_CHIPS = ['Thêm giao dịch mới', 'Tháng này chi tiền chợ bao nhiêu?', 'Sửa giao dịch gần nhất', 'Xoá một giao dịch'];
 const I = {
@@ -25,6 +27,7 @@ const I = {
   pie: '<path d="M21 12A9 9 0 1 1 12 3v9z"/><path d="M15 3.5A9 9 0 0 1 20.5 9H15z"/>',
   chat: '<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>',
   wave: '<path d="M2 12h2M6 8v8M10 5v14M14 8v8M18 10v4M22 12h0"/>',
+  image: '<rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="m21 15-5-5L5 21"/>',
   pause: '<rect x="6" y="5" width="4" height="14" rx="1"/><rect x="14" y="5" width="4" height="14" rx="1"/>',
 };
 const svg = (n) => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${I[n]}</svg>`;
@@ -37,6 +40,7 @@ let mode = (() => { try { return localStorage.getItem(MODE_KEY) || 'voice'; } ca
 let vState = 'idle';             // idle | listening | thinking | speaking | paused
 let silenceTimer = null, reprompts = 0;
 let lastAgent = null;            // câu trả lời AI gần nhất — để nhắc lại thông tin đã có khi người dùng im lặng
+let attach = [];                 // ảnh chờ gửi: {ext, b64, thumb} — không lưu sessionStorage (quá nặng)
 
 function load() {
   const empty = { open: false, turns: [], left: null, pending: null };
@@ -192,7 +196,7 @@ function drawChips() {
   box.querySelectorAll('.chip').forEach((b) => { b.onclick = () => handleUserText(b.textContent); });
 }
 function turnHtml(t, i) {
-  if (t.role === 'user') return `<div class="ai-msg user">${esc(t.content)}</div>`;
+  if (t.role === 'user') return `<div class="ai-msg user">${t.thumbs?.length ? `<div class="aid-uimgs">${t.thumbs.map((b) => `<img src="data:image/jpeg;base64,${b}" alt="ảnh đã gửi">`).join('')}</div>` : ''}${t.content ? esc(t.content) : ''}</div>`;
   if (t.role === 'card') return cardHtml(t, i);
   if (t.role === 'sys') return `<div class="aid-sys">${esc(t.content)}</div>`;
   return `<div class="ai-msg assistant">${md(t.content)}${t.detail ? `<div class="aid-detail">${md(t.detail)}</div>` : ''}</div>`;
@@ -210,6 +214,9 @@ function draw() {
     + (busy ? '<div class="ai-msg assistant muted"><span class="thinking">Đang nghĩ</span></div>' : '');
   body.querySelectorAll('[data-card-ok]').forEach((b) => { b.onclick = () => confirmPending(true); });
   body.querySelectorAll('[data-card-no]').forEach((b) => { b.onclick = () => confirmPending(false); });
+  body.querySelectorAll('input[data-bi]').forEach((cb) => {
+    cb.onchange = () => { const c = state.turns[state.pending?.idx]; if (!c || c.action !== 'batch') return; c.sel[+cb.dataset.bi] = cb.checked; save(); draw(); };
+  });
   body.scrollTop = body.scrollHeight;
   $d('#aid-chips').hidden = busy || state.turns.length > 1;
 }
@@ -219,6 +226,10 @@ const catName = (type, id) => (cats?.[type === 'income' ? 'income' : 'expense'] 
 const pmName = (id) => (cats?.paymentMethods || []).find((p) => p.id === id)?.name || (id || '—');
 const prName = (id) => (cats?.priorities || []).find((p) => p.id === id)?.name || '';
 function cardSummary(c) {
+  if (c.action === 'batch') {
+    const sel = c.items.filter((it, i) => it.tx && c.sel[i]);
+    return `${sel.length} khoản, tổng ${formatVnd(sel.reduce((s, it) => s + it.tx.amount, 0))}`;
+  }
   const t = c.action === 'delete' ? c.before : c.tx;
   return `${t.type === 'income' ? 'khoản thu' : 'khoản chi'} ${formatVnd(t.amount)}${t.category ? ', ' + catName(t.type, t.category) : ''}${t.note ? ', ' + t.note : ''}`;
 }
@@ -234,7 +245,28 @@ function txLines(t) {
     ['Ghi chú', t.note || '—'],
   ].filter(Boolean);
 }
+function batchHtml(c, i) {
+  const live = state.pending && state.pending.idx === i;
+  const st = { done: ' · ✓ xong', cancel: ' · đã huỷ', error: ' · lỗi', partial: ' · lưu dở' }[c.status] || '';
+  const n = c.items.filter((it, k) => it.tx && c.sel[k]).length;
+  const rows = c.items.map((it, k) => {
+    const t = it.tx || it.raw || {};
+    const label = it.tx ? (t.type === 'transfer' ? `${pmName(t.fromPayment)} → ${pmName(t.toPayment)}` : catName(t.type, t.category)) : `⚠ ${it.err}`;
+    const sub = [t.date ? formatDateVn(t.date) : '', it.tx && t.type !== 'transfer' ? pmName(t.paymentMethod) : '', t.note || ''].filter(Boolean).join(' · ');
+    const sign = t.type === 'income' ? '+' : t.type === 'transfer' ? '' : '−';
+    return `<label class="aid-brow ${it.tx ? '' : 'bad'} ${it.saved ? 'saved' : ''}">
+      <input type="checkbox" data-bi="${k}" ${it.tx && c.sel[k] ? 'checked' : ''} ${it.tx && live ? '' : 'disabled'}>
+      <span class="aid-binfo"><b>${esc(label)}</b><span>${esc(sub)}</span></span>
+      <span class="aid-bamt ${t.type || ''}">${it.saved ? '✓ ' : ''}${sign}${formatVnd(Math.round(Number(t.amount) || 0))}</span></label>`;
+  }).join('');
+  return `<div class="aid-card create ${c.status || ''}"><div class="aid-card-h">Thêm ${c.items.length} giao dịch từ ảnh${st}</div>
+    <div class="aid-blist">${rows}</div>
+    ${live ? `<div class="aid-card-a"><span class="small muted">Bỏ tick khoản không muốn lưu · nói "lưu" hoặc "không"</span>
+      <button type="button" class="btn btn-secondary btn-sm" data-card-no>Không</button>
+      <button type="button" class="btn btn-primary btn-sm" data-card-ok ${n ? '' : 'disabled'}>Lưu ${n} khoản</button></div>` : ''}</div>`;
+}
 function cardHtml(c, i) {
+  if (c.action === 'batch') return batchHtml(c, i);
   const title = { create: 'Thêm giao dịch', update: 'Sửa giao dịch', delete: 'Xoá giao dịch' }[c.action];
   let rows;
   if (c.action === 'update') {
@@ -281,6 +313,11 @@ function normalize(d, base = {}) {
   return { tx: out };
 }
 async function buildCard(a) {
+  if (a.intent === 'create' && Array.isArray(a.items) && a.items.length > 1) {
+    const items = a.items.map((raw) => { const r = normalize(raw); return r.err ? { err: r.err, raw } : { tx: r.tx }; });
+    if (!items.some((it) => it.tx)) return { err: 'chưa đọc rõ được khoản nào trong ảnh' };
+    return { role: 'card', action: 'batch', items, sel: items.map((it) => !!it.tx) };
+  }
   const d = a.draft || {};
   if (a.intent === 'create') {
     const r = normalize(d);
@@ -303,6 +340,7 @@ async function confirmPending(yes) {
     card.status = 'cancel'; save(); draw();
     return handleUserText('Không, chưa đúng. Hỏi mình cần sửa gì.', true);
   }
+  if (card.action === 'batch') return saveBatch(card);
   try {
     if (card.action === 'create') await addTransaction(card.tx.date.slice(0, 7), { id: genId(), ...card.tx });
     else if (card.action === 'delete') await deleteTransaction(card.month, card.id);
@@ -320,34 +358,91 @@ async function confirmPending(yes) {
   }
 }
 
+async function saveBatch(card) {
+  const pick = card.items.map((it, k) => ({ it, k })).filter(({ it, k }) => it.tx && card.sel[k] && !it.saved);
+  if (!pick.length) { state.turns.push({ role: 'sys', content: 'Chưa chọn khoản nào để lưu.' }); state.pending = { idx: state.turns.indexOf(card) }; save(); draw(); return; }
+  let ok = 0;
+  try {
+    for (const { it } of pick) {   // tuần tự: mỗi lần ghi đọc lại file mới nhất (1 commit/khoản), tránh xung đột sha
+      await addTransaction(it.tx.date.slice(0, 7), { id: genId(), ...it.tx });
+      it.saved = true; ok++; save(); draw();
+    }
+    card.status = 'done'; lastAgent = null;
+  } catch (e) {
+    card.status = 'partial';
+    state.turns.push({ role: 'sys', content: `⚠ Đã lưu ${ok}/${pick.length} khoản, còn lại lỗi: ${e.message}` });
+  }
+  if (ok) window.dispatchEvent(new CustomEvent('finance:changed'));
+  save(); draw();
+  if (card.status === 'done') await say(`Đã lưu ${ok} khoản. Còn gì nữa không?`);
+}
+
+// ── Ảnh đính kèm ──
+async function addFiles(files) {
+  files = [...files].filter((f) => !f.type || f.type.startsWith('image/'));
+  if (!files.length || busy) return;
+  const room = MAX_IMAGES - attach.length;
+  if (room <= 0) { flash(`Tối đa ${MAX_IMAGES} ảnh mỗi lần gửi.`); return; }
+  if (files.length > room) flash(`Chỉ lấy ${room} ảnh đầu (tối đa ${MAX_IMAGES}).`);
+  try {
+    for (const f of files.slice(0, room)) {
+      const [big, small] = await Promise.all([shrinkImage(f), shrinkImage(f, 240, 0.6)]);
+      attach.push({ ...big, thumb: small.b64 });
+    }
+  } catch (e) { flash('⚠ Không đọc được ảnh: ' + e.message); }
+  drawThumbs();
+  if (!attach.length) return;
+  if (mode === 'voice') return handleUserText('');           // giao tiếp: gửi luôn
+  const input = $d('#aid-in'); input.placeholder = 'Ghi chú thêm (tuỳ chọn) rồi Gửi';
+  input.focus({ preventScroll: true });
+}
+function drawThumbs() {
+  const box = $d('#aid-thumbs');
+  box.hidden = !attach.length;
+  box.innerHTML = attach.map((im, i) => `<span class="aid-thumb"><img src="data:image/jpeg;base64,${im.thumb}" alt="ảnh ${i + 1}">
+    <button type="button" data-rm="${i}" aria-label="Bỏ ảnh ${i + 1}">✕</button></span>`).join('')
+    + (attach.length ? `<span class="small muted">${attach.length}/${MAX_IMAGES} ảnh</span>` : '');
+  box.querySelectorAll('[data-rm]').forEach((b) => { b.onclick = () => { attach.splice(+b.dataset.rm, 1); drawThumbs(); }; });
+  if (!attach.length) $d('#aid-in').placeholder = 'Gõ, hoặc gửi ảnh hoá đơn…';
+}
+function flash(t) { const f = $d('#aid-left'); f.textContent = t; setTimeout(() => { if (f.textContent === t) drawHead(); }, 4000); }
+
 // ── Một lượt hội thoại ──
 const YES = /^(có|co|ok|oke|okay|ừ|ừm|uh|đồng ý|dong y|lưu|luu|xoá|xóa|xoa|được|duoc|đúng|chuẩn|xác nhận|xac nhan|yes|chắc chắn|làm đi)/i;
 const NO = /^(không|khong|ko|thôi|thoi|huỷ|hủy|huy|đừng|sai|no\b|chưa)/i;
 async function handleUserText(text, hidden = false) {
   text = (text || '').trim();
-  if (busy || !text || !AI_AVAILABLE) return;
+  const imgs = hidden ? [] : attach;
+  if (busy || (!text && !imgs.length) || !AI_AVAILABLE) return;
   clearTimeout(silenceTimer);
   const input = $d('#aid-in'); input.value = ''; autoGrow(input);
   // Đang chờ xác nhận: câu ngắn có/không → xử lý luôn (không tốn lượt AI)
-  if (state.pending && !hidden) {
+  if (state.pending && !hidden && !imgs.length) {
     const short = text.split(/\s+/).length <= 4;
     if (short && NO.test(text)) { state.turns.push({ role: 'user', content: text }); return confirmPending(false); }
     if (short && YES.test(text)) { state.turns.push({ role: 'user', content: text }); return confirmPending(true); }
     state.turns[state.pending.idx].status = 'cancel'; state.pending = null;   // nói điều khác = muốn sửa → bỏ thẻ cũ
   }
-  if (!hidden) state.turns.push({ role: 'user', content: text });
+  if (state.pending && imgs.length) { state.turns[state.pending.idx].status = 'cancel'; state.pending = null; }   // ảnh mới = việc mới
+  if (!hidden) state.turns.push(imgs.length ? { role: 'user', content: text, thumbs: imgs.map((im) => im.thumb) } : { role: 'user', content: text });
+  attach = []; drawThumbs();
   busy = true; voice?.mute(true); if (mode === 'voice') setV('thinking');
   save(); draw();
   cats ||= (await loadCategories().catch(() => ({ categories: null }))).categories;
-  const history = state.turns.filter((t) => t.role === 'user' || t.role === 'assistant').map((t) => ({ role: t.role, content: t.content }));
+  // memo = dữ liệu AI đã đọc (từ ảnh) ở lượt trước — lượt sau không gửi lại ảnh nên AI phải nhớ qua đây
+  const history = state.turns.filter((t) => t.role === 'user' || t.role === 'assistant').map((t) => ({ role: t.role,
+    content: (t.content || (t.thumbs ? '(gửi ảnh)' : '')) + (t.thumbs ? ` [kèm ${t.thumbs.length} ảnh]` : '') + (t.detail ? `\n${t.detail.slice(0, 500)}` : '') + (t.memo ? `\n[Dữ liệu đã đọc: ${t.memo}]` : '') }));
   if (!hidden) history.pop();   // câu vừa nói gửi riêng ở "text"
   let a;
   try {
-    const r = await aiCall({ mode: 'agent', text, history, page: ctx.page });
+    const r = await aiCall({ mode: 'agent', text, history, page: ctx.page, images: imgs.map(({ ext, b64 }) => ({ ext, b64 })) });
     a = r.agent || { say: '…' }; state.left = r.left;
   } catch (e) { a = { say: 'Lỗi: ' + e.message, intent: 'chat' }; }
   busy = false; lastAgent = a;
-  state.turns.push({ role: 'assistant', content: a.say || '…', detail: a.detail || '' });
+  if (a.intent === 'create' && !a.draft && Array.isArray(a.items) && a.items.length === 1) a.draft = a.items[0];
+  const memoData = Array.isArray(a.items) && a.items.length > 1 ? a.items : a.draft;
+  state.turns.push({ role: 'assistant', content: a.say || '…', detail: a.detail || '',
+    ...(memoData && ['create', 'update'].includes(a.intent) ? { memo: JSON.stringify(memoData).slice(0, 1500) } : {}) });
   let spoken = a.say;
   if (a.ready && ['create', 'update', 'delete'].includes(a.intent) && cats) {
     const card = await buildCard(a).catch((e) => ({ err: e.message }));
@@ -392,9 +487,13 @@ export function initAiDrawer() {
       <button type="button" class="aid-orb idle" id="aid-orb" aria-label="Bắt đầu / tạm dừng nói"></button>
       <div class="aid-vlabel" id="aid-vlabel"></div>
       <div class="aid-live" id="aid-live" aria-live="polite"></div>
+      <button type="button" class="btn btn-secondary btn-sm aid-vimg" id="aid-img2">${svg('image')} Gửi ảnh hoá đơn</button>
     </div>
+    <div class="aid-thumbs" id="aid-thumbs" hidden></div>
+    <input type="file" id="aid-file" accept="image/*" multiple hidden>
     <form class="aid-form" id="aid-form">
-      <textarea id="aid-in" rows="1" placeholder="Gõ: thêm, sửa, xoá, hỏi…" aria-label="Câu hỏi"></textarea>
+      <textarea id="aid-in" rows="1" placeholder="Gõ, hoặc gửi ảnh hoá đơn…" aria-label="Câu hỏi"></textarea>
+      <button type="button" class="icon-btn" id="aid-img" title="Gửi ảnh hoá đơn / chuyển khoản" aria-label="Gửi ảnh">${svg('image')}</button>
       <button type="button" class="icon-btn" id="aid-mic" aria-label="Đọc chính tả" aria-pressed="false">${svg('mic')}</button>
       <button class="aid-send" aria-label="Gửi">${svg('send')}</button>
     </form>
@@ -405,7 +504,7 @@ export function initAiDrawer() {
   $d('#aid-close').onclick = closeAi;
   $d('#aid-clear').onclick = () => {
     if (busy) return;
-    state.turns = []; state.pending = null; lastAgent = null; reprompts = 0; save(); draw();
+    state.turns = []; state.pending = null; lastAgent = null; reprompts = 0; attach = []; drawThumbs(); save(); draw();
     if (mode === 'voice') { startVoice(); voice?.mute(true); say(`Chào ${greetName()}, mình giúp gì?`); }
   };
   $d('#aid-review').onclick = async () => {
@@ -431,6 +530,16 @@ export function initAiDrawer() {
     reprompts = 0;
     if (startVoice()) { voice.mute(false); setV('listening'); armSilence(); }
   };
+  const pick = () => { if (busy) return; if (mode === 'voice' && startVoice()) voice.mute(true); $d('#aid-file').click(); };
+  $d('#aid-img').onclick = pick; $d('#aid-img2').onclick = pick;
+  $d('#aid-file').onchange = (e) => { const f = [...e.target.files]; e.target.value = ''; addFiles(f); };
+  input.addEventListener('paste', (e) => {            // dán ảnh chụp màn hình (Ctrl/⌘+V)
+    const f = [...(e.clipboardData?.files || [])].filter((x) => x.type.startsWith('image/'));
+    if (f.length) { e.preventDefault(); addFiles(f); }
+  });
+  el.addEventListener('dragover', (e) => { if ([...e.dataTransfer.items].some((x) => x.kind === 'file')) { e.preventDefault(); el.classList.add('drop'); } });
+  el.addEventListener('dragleave', (e) => { if (!el.contains(e.relatedTarget)) el.classList.remove('drop'); });
+  el.addEventListener('drop', (e) => { e.preventDefault(); el.classList.remove('drop'); addFiles(e.dataTransfer.files); });
   const sendTyped = () => handleUserText(input.value);
   $d('#aid-form').onsubmit = (e) => { e.preventDefault(); sendTyped(); };
   input.addEventListener('input', () => autoGrow(input));

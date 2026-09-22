@@ -73,3 +73,21 @@ export function listen(onText, { btn, onStatus } = {}) {
   try { r.start(); } catch (e) { active = null; setRec(false); onStatus?.('⚠ Không bật được micro: ' + e.message); }
   return r;
 }
+
+// Thu nhỏ ảnh trên trình duyệt trước khi gửi (ảnh điện thoại 5-10MB → ~300KB). max = cạnh dài nhất (px).
+export function shrinkImage(file, max = 1600, quality = 0.85) {
+  return new Promise((resolve, reject) => {
+    if (file.type && !file.type.startsWith('image/')) return reject(new Error(`"${file.name}" không phải ảnh`));
+    const img = new Image();
+    img.onload = () => {
+      const k = Math.min(1, max / Math.max(img.width, img.height));
+      const c = document.createElement('canvas'); c.width = Math.round(img.width * k); c.height = Math.round(img.height * k);
+      const g = c.getContext('2d'); g.fillStyle = '#fff'; g.fillRect(0, 0, c.width, c.height);   // PNG trong suốt → nền trắng
+      g.drawImage(img, 0, 0, c.width, c.height);
+      URL.revokeObjectURL(img.src);
+      resolve({ ext: 'jpg', b64: c.toDataURL('image/jpeg', quality).split(',')[1] });
+    };
+    img.onerror = () => { URL.revokeObjectURL(img.src); reject(new Error('định dạng ảnh không hỗ trợ (dùng JPG/PNG)')); };
+    img.src = URL.createObjectURL(file);
+  });
+}

@@ -614,3 +614,32 @@ a.acct.drill-link { margin: 0 -8px; padding-left: 8px; padding-right: 8px; }
 a.debt-top.drill-link { margin: 0 -8px; padding: 4px 8px; }
 button.over-row { width: calc(100% + 12px); box-sizing: border-box; background: none; border: 0; font: inherit; color: inherit; text-align: left; cursor: pointer; border-radius: 8px; margin: 0 -6px; padding: 4px 6px; }
 button.over-row:hover { background: rgba(0, 0, 0, .05); text-decoration: underline; }
+
+/* Trợ lý: ảnh đính kèm + thẻ nhiều giao dịch (22/09/2026) */
+.aid-thumbs { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 0 12px 8px; padding: 8px; border: 1px dashed var(--border-strong); border-radius: 12px; background: var(--surface-2, var(--surface)); }
+.aid-thumbs[hidden] { display: none; }
+.aid-thumb { position: relative; width: 56px; height: 56px; }
+.aid-thumb img { width: 100%; height: 100%; object-fit: cover; border-radius: 8px; border: 1px solid var(--border); }
+.aid-thumb button { position: absolute; top: -7px; right: -7px; width: 22px; height: 22px; border-radius: 50%; border: 0; cursor: pointer;
+  background: var(--text); color: var(--surface); font-size: 11px; line-height: 22px; padding: 0; }
+.aid-uimgs { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 6px; }
+.aid-uimgs img { width: 72px; height: 72px; object-fit: cover; border-radius: 8px; }
+.aid-vimg { display: inline-flex; align-items: center; gap: 6px; margin-top: 2px; }
+.aid-vimg svg { width: 16px; height: 16px; }
+.ai-drawer.drop { outline: 3px dashed var(--brand); outline-offset: -8px; }
+.aid-blist { display: grid; }
+.aid-brow { display: flex; align-items: center; gap: 10px; padding: 8px 12px; border-top: 1px solid var(--border); cursor: pointer; }
+.aid-brow:first-child { border-top: 0; }
+.aid-brow input { flex: none; width: 18px; height: 18px; accent-color: var(--brand); }
+.aid-brow.bad { opacity: .6; cursor: default; }
+.aid-brow.bad b { color: var(--danger); }
+.aid-brow.saved { opacity: .7; }
+.aid-binfo { flex: 1; min-width: 0; display: grid; font-size: 13.5px; }
+.aid-binfo span { font-size: 12px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.aid-bamt { font-weight: 700; font-size: 13.5px; white-space: nowrap; color: var(--expense-ink, var(--expense)); }
+.aid-bamt.income { color: var(--income-ink, var(--income)); }
+.aid-bamt.transfer { color: var(--text-2); }
+/* Bảng AI trong ngăn hẹp: không bóp cột tới mức vỡ chữ, cho cuộn ngang */
+.ai-drawer .ai-table table { width: max-content; min-width: 100%; }
+.ai-drawer .ai-table th { white-space: nowrap; }
+.ai-drawer .ai-table td { max-width: 220px; }

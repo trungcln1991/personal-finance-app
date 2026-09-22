@@ -1,6 +1,6 @@
 import { renderNav, requireToken, showError, clearError, icon, toast } from './nav.js';
 import { loadCategories, loadTransactions, addTransaction, updateTransaction, deleteTransaction, genId, formatNumber, parseAmountInput, attachAmountInput, categoryIcon, todayDateStr, currentMonthKey } from './store.js';
-import { aiCall, AI_AVAILABLE, listen, esc } from './ai-client.js';
+import { aiCall, AI_AVAILABLE, listen, esc, shrinkImage } from './ai-client.js';
 import { hydrateIcons } from './ui.js';
 import { setAiContext } from './ai-drawer.js';
 
@@ -303,7 +303,7 @@ init().then(() => setAiContext('Trang Thêm/Sửa giao dịch (form nhập tay).
     if (!files.length) return;
     status('Đang chuẩn bị ảnh…');
     try {
-      images = await Promise.all(files.map(shrink));
+      images = await Promise.all(files.map((f) => shrinkImage(f)));
       $('ai-thumbs').innerHTML = images.map((im) => `<img src="data:image/jpeg;base64,${im.b64}" alt="ảnh đính kèm">`).join('')
         + '<button type="button" class="icon-btn" id="ai-thumbs-x" aria-label="Bỏ ảnh" title="Bỏ ảnh">✕</button>';
       $('ai-thumbs-x').onclick = () => { clearImages(); scanBox.classList.add('hidden'); ask(''); status('Đã bỏ ảnh.'); };
@@ -312,21 +312,6 @@ init().then(() => setAiContext('Trang Thêm/Sửa giao dịch (form nhập tay).
       runImage('');
     } catch (err) { status('⚠ Không đọc được ảnh: ' + err.message); }
   };
-  function shrink(file) {
-    return new Promise((resolve, reject) => {
-      const img = new Image();
-      img.onload = () => {
-        const k = Math.min(1, 1600 / Math.max(img.width, img.height));
-        const c = document.createElement('canvas'); c.width = Math.round(img.width * k); c.height = Math.round(img.height * k);
-        c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
-        URL.revokeObjectURL(img.src);
-        resolve({ ext: 'jpg', b64: c.toDataURL('image/jpeg', 0.85).split(',')[1] });
-      };
-      img.onerror = () => reject(new Error('định dạng ảnh không hỗ trợ'));
-      img.src = URL.createObjectURL(file);
-    });
-  }
-
   async function runImage(hint) {
     const btn = $('ai-fill'); btn.disabled = true; ask(''); scanBox.classList.add('hidden');
     msg.innerHTML = `<span class="thinking">AI đang đọc ${images.length} ảnh (10–40 giây)</span>`;

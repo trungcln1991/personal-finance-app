@@ -1,4 +1,4 @@
-const CACHE_NAME = 'thu-chi-shell-v21';
+const CACHE_NAME = 'thu-chi-shell-v22';
 const SHELL_FILES = [
   './',
   './index.html',

@@ -242,15 +242,29 @@ SỐ LIỆU TỔNG HỢP:
 GIAO DỊCH 2 THÁNG GẦN NHẤT (có id):
 {index}
 
-{page}HỘI THOẠI:
+{page}{images}HỘI THOẠI:
 {conv}
 {who}: {text}
 
 Reply ONLY JSON (không thêm chữ nào khác):
 {{"say":"...","detail":"markdown hoặc rỗng","intent":"create|update|delete|query|chat",
 "draft":{{"id":"chỉ khi update/delete","type":"expense|income|transfer","date":"YYYY-MM-DD","amount":0,"category":"id","paymentMethod":"id|null",
-"fromPayment":"id|null","toPayment":"id|null","priority":"id|null","note":""}},"ready":false}}
-(draft = null khi query/chat; với update: draft là giao dịch SAU khi sửa, đủ mọi trường; với delete: chỉ cần id)"""
+"fromPayment":"id|null","toPayment":"id|null","priority":"id|null","note":""}},"ready":false,"items":[]}}
+(draft = null khi query/chat; với update: draft là giao dịch SAU khi sửa, đủ mọi trường; với delete: chỉ cần id.
+"items" CHỈ dùng khi ảnh có từ 2 giao dịch trở lên: mỗi phần tử có dạng như draft (không có id), khi đó intent=create, draft=null)"""
+
+AGENT_IMAGE_NOTE = """ẢNH NGƯỜI DÙNG VỪA GỬI ({n} ảnh — hoá đơn, bill, ảnh chụp màn hình chuyển khoản/app ngân hàng/ví…):
+- Đọc kỹ từng ảnh bằng công cụ Read. Lấy số TỔNG phải trả (không lấy tiền khách đưa/tiền thối), ngày trên ảnh (không thấy thì hôm nay),
+  nơi mua + vài món chính cho note. Câu người dùng gõ kèm (nếu có) được ưu tiên hơn nội dung ảnh.
+- 1 hoá đơn = 1 giao dịch → dùng "draft". Ảnh lịch sử/sao kê nhiều dòng, hoặc nhiều ảnh nhiều hoá đơn → mỗi khoản 1 phần tử trong "items".
+- Tiền VÀO tài khoản = income. Chuyển khoản giữa 2 tài khoản của chính gia đình = transfer.
+- Phương thức thanh toán: CHỈ điền khi ảnh cho thấy rõ (ảnh app ngân hàng/ví/thẻ khớp 1 phương thức trong danh sách, hoặc hoá đơn ghi "tiền mặt"/"thẻ").
+  Không rõ → để null, ready=false và HỎI 1 câu (câu trả lời áp dụng cho mọi khoản trong ảnh).
+- So với danh sách giao dịch có id ở trên: khoản nào cùng ngày + cùng số tiền đã có sẵn thì CẢNH BÁO có thể đã nhập rồi và KHÔNG đưa vào nữa trừ khi người dùng bảo vẫn lưu.
+- Ảnh mờ / không phải chứng từ chi tiêu → intent=chat, nói rõ đọc được gì và hỏi lại.
+- "say" tóm tắt ngắn những gì đọc được (vd "Hoá đơn Bách Hoá Xanh 167 nghìn ngày 18/9") rồi hỏi "Lưu nhé?" hoặc hỏi phần còn thiếu.
+
+"""
 
 
 def _bridge(prompt: str, images: list | None = None) -> str:
@@ -269,8 +283,10 @@ def _run_ai(jid: str, mode: str, text: str, history: list, who: str = "bạn", p
         if mode == "agent":
             conv = "\n".join(f"{who if h.get('role') == 'user' else 'Trợ lý'}: {h.get('content', '')}" for h in history[-14:])
             page_note = f"NGƯỜI DÙNG ĐANG XEM: {page[:1000]}\n\n" if page else ""
+            img_note = AGENT_IMAGE_NOTE.format(n=len(images)) if images else ""
             raw = _bridge(AGENT_PROMPT.format(who=who, today=date.today().isoformat(), cats=_categories_brief(), ctx=_finance_context()[:12000],
-                                              index=_tx_index(), page=page_note, conv=conv, text=text[:1500]))
+                                              index=_tx_index(), page=page_note, images=img_note, conv=conv,
+                                              text=text[:1500] or "(chỉ gửi ảnh, không ghi chú)"), images or None)
             try:
                 res = {"agent": json.loads(raw[raw.find("{"):raw.rfind("}") + 1])}
             except Exception:  # AI không trả JSON → coi như câu trả lời thường
@@ -305,14 +321,14 @@ async def ai_job(request: Request):
     if mode not in ("chat", "review", "parse", "image", "agent"):
         raise HTTPException(400, "Chế độ AI không hợp lệ")
     images = []
-    if mode == "image":
+    if mode in ("image", "agent"):
         for im in (body.get("images") or [])[:4]:
             ext = str(im.get("ext", "")).lower()
             b64 = str(im.get("b64", ""))
             if ext not in ("jpg", "jpeg", "png", "webp") or not b64 or len(b64) > 11_000_000:
                 raise HTTPException(400, "Ảnh không hợp lệ (chỉ JPG/PNG/WEBP, tối đa 8MB)")
             images.append({"ext": ext, "b64": b64})
-        if not images:
+        if mode == "image" and not images:
             raise HTTPException(400, "Chưa có ảnh")
     today = date.today().isoformat()
     if _ai_used["day"] != today:
