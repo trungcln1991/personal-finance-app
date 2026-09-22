@@ -325,3 +325,95 @@ export function computeDebtStatus(categories, allTx, todayStr) {
       return { ...p, configured: true, totalDebt, dueAmount, currentMonthSpend, paidAmount, canPay: totalDebt > 0, dueDate, isOverdue };
     });
 }
+
+// ════════ "Tháng trả thật" (22/09/2026, 3T chốt) ════════
+// Khoản quẹt thẻ tín dụng / ví trả sau KHÔNG thuộc tháng quẹt mà thuộc THÁNG PHẢI TRẢ theo sao kê:
+//   HSBC chốt 14, hạn 5 tháng sau → quẹt 01–14/9 trả 05/10 (tháng 10) · quẹt 15–30/9 trả 05/11 (tháng 11).
+//   Mono chốt cuối tháng, hạn 10 → quẹt tháng 9 trả 10/10 (tháng 10).
+//   Thẻ/ví chưa cấu hình ngày chốt → mặc định tháng kế tiếp.
+// Tiền mặt/ngân hàng: tháng của chính ngày giao dịch.
+
+export function statementDueDate(p, dateStr) {
+  const [y, m, d] = dateStr.split('-').map(Number);
+  if (!(p.statementDay && p.dueDay)) {
+    const n = addMonths(y, m, 1);
+    return toDateStr(n.year, n.month, 1);   // chưa cấu hình chu kỳ: tính vào tháng sau
+  }
+  let cy = y, cm = m;
+  if (d > resolveMonthDay(y, m, p.statementDay)) { const n = addMonths(y, m, 1); cy = n.year; cm = n.month; }
+  const due = addMonths(cy, cm, 1);
+  return toDateStr(due.year, due.month, resolveMonthDay(due.year, due.month, p.dueDay));
+}
+
+// Bảng tra id → phương thức (đã chuẩn hoá) + tập id thẻ/ví
+export function debtMethodMap(categories) {
+  const map = new Map();
+  for (const p of (categories.paymentMethods || []).map(normalizePaymentMethod)) {
+    if (!paymentType(p.type).tracksBalance) map.set(p.id, p);
+  }
+  return map;
+}
+
+// Tháng mà 1 giao dịch được TÍNH vào (Chi, danh mục, ngân sách). Thu/chi qua thẻ/ví → tháng phải trả.
+// Khoản trước mốc theo dõi nợ (openingDebtDate) coi như đã tất toán trong sổ cũ → giữ tháng quẹt.
+export function effectiveMonth(t, debtMap) {
+  const p = t.type !== 'transfer' ? debtMap.get(t.paymentMethod) : null;
+  if (!p || (p.openingDebtDate && t.date < p.openingDebtDate)) return t.date.slice(0, 7);
+  return statementDueDate(p, t.date).slice(0, 7);
+}
+
+// Tổng hợp 1 tháng theo "tháng trả thật".
+//  income   = thu tiền thật trong tháng (+ hoàn tiền về thẻ/ví tính vào tháng phải trả, vì nó trừ vào kỳ đó)
+//  out      = chi tiền mặt/ngân hàng trong tháng + khoản quẹt thẻ/ví đến hạn trả trong tháng
+//  expenseList = đúng các khoản chi tạo nên `out` (dùng cho danh mục, ngân sách, mức độ)
+//  cardDue  = phần của `out` đến từ thẻ/ví (quẹt từ trước, trả tháng này)
+//  debtPaid = tiền thật đã chuyển trả thẻ/ví trong tháng (chỉ để hiển thị, KHÔNG cộng vào out — tránh tính 2 lần)
+export function monthSummary(allTx, monthKey, debtMap) {
+  let income = 0, cashOut = 0, cardDue = 0, debtPaid = 0;
+  const expenseList = [];
+  for (const t of allTx) {
+    if (t.type === 'transfer') {
+      if (t.date.slice(0, 7) === monthKey && debtMap.has(t.toPayment) && !debtMap.has(t.fromPayment)) debtPaid += t.amount;
+      continue;
+    }
+    if (effectiveMonth(t, debtMap) !== monthKey) continue;
+    const viaCard = debtMap.has(t.paymentMethod);
+    if (t.type === 'income') { income += t.amount; continue; }
+    if (t.type !== 'expense') continue;
+    expenseList.push(viaCard ? { ...t, dueMonth: monthKey } : t);
+    if (viaCard) cardDue += t.amount; else cashOut += t.amount;
+  }
+  return { income, out: cashOut + cardDue, cashOut, cardDue, debtPaid, expenseList };
+}
+
+// Sổ nợ theo tháng đến hạn, cho 1 tháng đang xem M và mốc "đã trả tính tới ngày" paidUntil:
+//  unpaidDue = nợ ĐÃ tới hạn trong/trước tháng M mà chưa trả (đang trễ nếu đã qua ngày hạn)
+//  nextDue   = phải trả trong tháng M+1 (sau khi trừ phần đã trả trước)
+//  later     = phải trả từ tháng M+2 trở đi (vd HSBC quẹt sau ngày chốt)
+// Thanh toán (chuyển vào thẻ/ví) và hoàn tiền (thu qua thẻ/ví) trừ vào khoản đến hạn SỚM NHẤT trước.
+export function debtSchedule(categories, allTx, monthKey, paidUntil) {
+  const debtMap = debtMethodMap(categories);
+  const next = shiftMonthKey(monthKey, 1);
+  const rows = [];
+  for (const p of debtMap.values()) {
+    if (!p.openingDebtDate) continue;
+    const byMonth = new Map();        // tháng đến hạn → số tiền
+    const add = (mk, a) => byMonth.set(mk, (byMonth.get(mk) || 0) + a);
+    if (p.openingDebt) add(p.openingDebtDate.slice(0, 7), p.openingDebt);
+    let paid = 0;
+    for (const t of allTx) {
+      if (t.date < p.openingDebtDate || t.date > paidUntil) continue;
+      if (t.type === 'expense' && t.paymentMethod === p.id) add(effectiveMonth(t, debtMap), t.amount);
+      else if (t.type === 'transfer' && t.fromPayment === p.id) add(statementDueDate(p, t.date).slice(0, 7), t.amount);  // rút tiền mặt từ thẻ
+      else if (t.type === 'transfer' && t.toPayment === p.id) paid += t.amount;
+      else if (t.type === 'income' && t.paymentMethod === p.id) paid += t.amount;   // hoàn tiền về thẻ
+    }
+    const through = (mk) => [...byMonth].filter(([k]) => k <= mk).reduce((s, [, a]) => s + a, 0);
+    const total = through('9999-12');
+    const unpaid = (mk) => Math.max(0, through(mk) - paid);
+    const unpaidDue = unpaid(monthKey);
+    const nextDue = unpaid(next) - unpaidDue;
+    rows.push({ id: p.id, name: p.name, type: p.type, unpaidDue, nextDue, later: Math.max(0, total - paid) - unpaid(next), total: total - paid });
+  }
+  return rows;
+}

@@ -7,8 +7,8 @@ export async function aiCall(body) {
   const res = await fetch('/api/ai/job', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
   const j = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(j.detail || `Lỗi AI (${res.status})`);
-  for (let i = 0; i < 200; i++) {
-    await new Promise((r) => setTimeout(r, 3000));
+  for (let i = 0; i < 600; i++) {   // hỏi lại mỗi 1s (trước 3s → chậm thêm trung bình 1,5s mỗi câu)
+    await new Promise((r) => setTimeout(r, 1000));
     const r = await fetch(`/api/ai/job/${j.job}`);
     const d = await r.json().catch(() => ({}));
     if (!r.ok) throw new Error(d.detail || `Lỗi AI (${r.status})`);

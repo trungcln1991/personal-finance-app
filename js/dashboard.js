@@ -2,7 +2,7 @@ import { renderNav, requireToken, showError, icon, toast, getMe, isPrivate, setP
 import {
   loadCategories, loadBudget, loadTransactions, saveTransactions, formatVnd, currentMonthKey, categoryIcon,
   OWNERS, paymentType, normalizePaymentMethod, loadTransactionsRange, computeAccountBalances,
-  shiftMonthKey, computeDebtStatus, addTransaction, genId, resolveVersioned,
+  shiftMonthKey, computeDebtStatus, addTransaction, genId, resolveVersioned, monthSummary, debtSchedule, debtMethodMap,
   formatNumber, parseAmountInput, attachAmountInput, todayDateStr, formatDateVn, categoryName,
 } from './store.js';
 import { esc } from './ai-client.js';
@@ -35,17 +35,9 @@ const drawPriv = () => { privBtn.innerHTML = icon(isPrivate() ? 'eyeOff' : 'eye'
 drawPriv();
 privBtn.onclick = () => { setPrivate(!isPrivate()); drawPriv(); };
 
-// "Chi" của 1 tháng = tiền thật ra khỏi túi: chi trả ngay (tiền mặt/ngân hàng)
-// + tiền trả nợ ví/thẻ. Chi bằng ví trả sau tháng này dồn sang "Nợ tháng sau".
-// Nhờ vậy Thu − Chi khớp tiền thật còn lại và không tính trùng khi trả nợ.
-function monthFlow(txs, debtIds) {
-  const income = txs.filter((t) => t.type === 'income');
-  const expense = txs.filter((t) => t.type === 'expense');
-  const deferred = expense.filter((t) => debtIds.has(t.paymentMethod));
-  const paidNow = expense.filter((t) => !debtIds.has(t.paymentMethod));
-  const debtPay = txs.filter((t) => t.type === 'transfer' && debtIds.has(t.toPayment));
-  return { income: sum(income), out: sum(paidNow) + sum(debtPay), deferred: sum(deferred), expenseList: expense };
-}
+// "Tháng trả thật" (22/09/2026): khoản quẹt thẻ/ví tính vào THÁNG PHẢI TRẢ theo sao kê (xem store.js monthSummary).
+// Chi của tháng = chi tiền mặt/ngân hàng trong tháng + khoản thẻ/ví đến hạn trong tháng — và đúng bằng tổng theo danh mục.
+const endOfMonth = (mk) => `${mk}-${String(new Date(Number(mk.slice(0, 4)), Number(mk.slice(5)), 0).getDate()).padStart(2, '0')}`;
 
 function deltaHtml(cur, prev, goodWhenUp) {
   if (!prev) return '<span class="muted">Chưa có tháng trước để so</span>';
@@ -87,35 +79,49 @@ async function render(monthKey) {
     }
 
     const allMethods = categories.paymentMethods.map(normalizePaymentMethod);
-    const debtIds = new Set(allMethods.filter((p) => !paymentType(p.type).tracksBalance).map((p) => p.id));
+    const debtMap = debtMethodMap(categories);
 
     // Nạp 1 lần: từ mốc cấu hình sớm nhất (tính số dư/nợ) hoặc 5 tháng trước (biểu đồ), lấy cái sớm hơn.
     const earliest = allMethods.flatMap((p) => [p.initialBalanceDate, p.openingDebtDate]).filter(Boolean).sort()[0];
-    const flowFrom = shiftMonthKey(monthKey, -5);
+    const flowFrom = shiftMonthKey(monthKey, -8);   // cột đầu của dòng tiền 6 tháng cần cả khoản thẻ quẹt 2 tháng trước đó
     const fromMonth = earliest && earliest.slice(0, 7) < flowFrom ? earliest.slice(0, 7) : flowFrom;
     const loaded = await loadTransactionsRange(fromMonth);
     // Giao dịch tháng đang xem lấy từ bản vừa đọc (có thể vừa thêm lương tự động).
     const allTx = [...loaded.filter((t) => t.date.slice(0, 7) !== monthKey), ...transactions];
 
     // ── 4 ô tổng ──
-    const cur = monthFlow(transactions, debtIds);
+    const cur = monthSummary(allTx, monthKey, debtMap);
     const prevMk = shiftMonthKey(monthKey, -1);
-    const prev = monthFlow(allTx.filter((t) => t.date.slice(0, 7) === prevMk), debtIds);
+    const prev = monthSummary(allTx, prevMk, debtMap);
     $('total-income').textContent = formatVnd(cur.income);
     $('total-expense').textContent = formatVnd(cur.out);
-    $('total-deferred').textContent = formatVnd(cur.deferred);
     $('d-income').innerHTML = deltaHtml(cur.income, prev.income, true);
-    $('d-expense').innerHTML = deltaHtml(cur.out, prev.out, false);
+    $('d-expense').innerHTML = deltaHtml(cur.out, prev.out, false)
+      + (cur.cardDue ? `<br><span class="muted">gồm <b class="money">${formatVnd(cur.cardDue)}</b> thẻ/ví đến hạn</span>` : '');
 
-    // "Còn lại" = tiền thật đang có tính đến hết tháng: tự cộng tiền dư các tháng trước.
+    // Tháng đã qua: tính tới cuối tháng đó. Tháng này / tương lai: tính tới hôm nay.
+    const today = todayDateStr();
+    const until = endOfMonth(monthKey) < today ? endOfMonth(monthKey) : today;
+    const sched = debtSchedule(categories, allTx, monthKey, until);
+    const nextDue = sched.reduce((s, r) => s + r.nextDue, 0);
+    const later = sched.reduce((s, r) => s + r.later, 0);
+    const unpaidDue = sched.reduce((s, r) => s + r.unpaidDue, 0);
+    $('deferred-label').textContent = `Phải trả ${shortMonth(shiftMonthKey(monthKey, 1))}`;
+    $('total-deferred').textContent = formatVnd(nextDue);
+    $('deferred-sub').innerHTML = sched.filter((r) => r.nextDue).map((r) => `${esc(r.name.replace(/\s*\(.*\)/, ''))} <b class="money">${formatVnd(r.nextDue)}</b>`).join(' · ')
+      + (later ? `<br><span class="muted">sau đó còn <b class="money">${formatVnd(later)}</b></span>` : '') || 'Không có khoản thẻ/ví đến hạn';
+
+    // "Còn lại" = tiền thật (mặt + ngân hàng) tới cuối tháng / hôm nay − nợ thẻ/ví ĐÃ tới hạn tháng này mà chưa trả.
     const carryOver = computeAccountBalances(categories, allTx.filter((t) => t.date < `${monthKey}-01`))
       .reduce((s, a) => s + (a.balance || 0), 0);
-    const balance = carryOver + cur.income - cur.out;
+    const realEnd = computeAccountBalances(categories, allTx.filter((t) => t.date <= until))
+      .reduce((s, a) => s + (a.balance || 0), 0);
+    const balance = realEnd - unpaidDue;
     $('total-balance').textContent = formatVnd(balance);
     $('total-balance').className = 'kpi-value money ' + (balance >= 0 ? '' : 'neg');
-    $('carry-line').innerHTML = carryOver
-      ? `Gồm <b class="money">${formatVnd(carryOver)}</b> mang sang`
-      : 'Thu − Chi trong tháng';
+    $('carry-line').innerHTML = unpaidDue
+      ? `Tiền thật <b class="money">${formatVnd(realEnd)}</b> − nợ đến hạn chưa trả <b class="money">${formatVnd(unpaidDue)}</b>`
+      : carryOver ? `Gồm <b class="money">${formatVnd(carryOver)}</b> mang sang` : 'Tiền mặt + ngân hàng';
 
     // ── Hero: tiền đang có hôm nay (không phụ thuộc tháng đang xem) ──
     const accounts = computeAccountBalances(categories, allTx);
@@ -132,7 +138,7 @@ async function render(monthKey) {
 
     // ── Dòng tiền 6 tháng ──
     const months = Array.from({ length: 6 }, (_, i) => shiftMonthKey(monthKey, i - 5));
-    const flows = months.map((mk) => ({ mk, ...monthFlow(allTx.filter((t) => t.date.slice(0, 7) === mk), debtIds) }));
+    const flows = months.map((mk) => ({ mk, ...monthSummary(allTx, mk, debtMap) }));
     const max = Math.max(1, ...flows.flatMap((f) => [f.income, f.out]));
     $('flow').innerHTML = flows.map((f) => `
       <div class="flow-col ${f.mk === monthKey ? 'sel' : ''}" data-mk="${f.mk}" role="button" tabindex="0" aria-label="${monthLabel(f.mk)}: thu ${formatVnd(f.income)}, chi ${formatVnd(f.out)}">
@@ -166,8 +172,11 @@ async function render(monthKey) {
     renderDebts(debts, accounts, monthKey);
 
     // ── Chi theo danh mục & ngân sách (gộp 1 bảng) ──
-    const byCat = {};
-    for (const t of cur.expenseList) byCat[t.category] = (byCat[t.category] || 0) + t.amount;
+    const byCat = {}, byCatCard = {};
+    for (const t of cur.expenseList) {
+      byCat[t.category] = (byCat[t.category] || 0) + t.amount;
+      if (t.dueMonth) byCatCard[t.category] = (byCatCard[t.category] || 0) + t.amount;
+    }
     const totalExp = Object.values(byCat).reduce((a, b) => a + b, 0);
     const budgets = Object.entries(budget.categories || {})
       .map(([id, cfg]) => [id, { cfg, active: resolveVersioned(cfg.versions, monthKey) }])
@@ -190,7 +199,9 @@ async function render(monthKey) {
         const left = limit - spent;
         sub = left >= 0 ? `còn ${formatVnd(left)} / ${formatVnd(limit)}` : `vượt ${formatVnd(-left)} / ${formatVnd(limit)}`;
         // Dự báo: tháng hiện tại, tiêu theo nhịp hiện tại thì cuối tháng có vượt không
-        if (dayOfMonth && left >= 0 && spent > 0 && (spent / dayOfMonth) * daysIn > limit * 1.05) sub += ' · <span class="neg">nhịp này sẽ vượt</span>';
+        // (khoản thẻ/ví đến hạn là số cố định cả tháng, không nhân theo nhịp ngày)
+        const cashPart = spent - (byCatCard[id] || 0);
+        if (dayOfMonth && left >= 0 && cashPart > 0 && (byCatCard[id] || 0) + (cashPart / dayOfMonth) * daysIn > limit * 1.05) sub += ' · <span class="neg">nhịp này sẽ vượt</span>';
       } else {
         bar = `<div class="bar"><i style="width:${totalExp ? (spent / totalExp) * 100 : 0}%;background:var(--text-2);opacity:.45"></i></div>`;
         sub = 'chưa đặt ngân sách';
@@ -203,7 +214,7 @@ async function render(monthKey) {
     }).join('') : '<div class="empty"><div class="big">🧾</div>Chưa có khoản chi nào tháng này.</div>';
 
     // Bấm 1 danh mục → bung chi tiết ngay bên dưới (chỉ mở 1 mục 1 lúc)
-    const prevExp = allTx.filter((t) => t.type === 'expense' && t.date.slice(0, 7) === prevMk);
+    const prevExp = prev.expenseList;
     const drillCtx = { monthKey, prevMk, categories, expenses: cur.expenseList, prevExp, bMap, dayOfMonth, daysIn, rerender: () => render(monthKey) };
     $('cat-list').querySelectorAll('.cat-item').forEach((item) => {
       const row = item.querySelector('.drill');
@@ -237,7 +248,7 @@ async function render(monthKey) {
     for (const t of cur.expenseList) byP[t.priority || 'nice'] = (byP[t.priority || 'nice'] || 0) + t.amount;
     $('priority-card').innerHTML = totalExp ? `
       <div class="stack-bar">${P.map(([k]) => byP[k] ? `<i class="p-${k}" style="width:${(byP[k] / totalExp) * 100}%"></i>` : '').join('')}</div>
-      <div class="stack-legend">${P.map(([k, l]) => `<a class="drill-link" href="transactions.html?month=${monthKey}&type=expense&prio=${k}"><i class="p-${k}"></i>${l}<span class="muted">${Math.round((byP[k] / totalExp) * 100)}%</span><b class="money">${formatVnd(byP[k])}</b><span class="chev">${icon('right')}</span></a>`).join('')}</div>
+      <div class="stack-legend">${P.map(([k, l]) => `<a class="drill-link" href="transactions.html?month=${monthKey}&basis=due&type=expense&prio=${k}"><i class="p-${k}"></i>${l}<span class="muted">${Math.round((byP[k] / totalExp) * 100)}%</span><b class="money">${formatVnd(byP[k])}</b><span class="chev">${icon('right')}</span></a>`).join('')}</div>
       ${byP.unnecessary ? `<p class="small muted" style="margin:10px 0 0">Cắt được phần "Không cần thiết" là dư thêm ${formatVnd(byP.unnecessary)} tháng này.</p>` : ''}`
       : '<p class="muted" style="margin:0">Chưa có khoản chi.</p>';
 
@@ -252,7 +263,7 @@ async function render(monthKey) {
     // Cho trợ lý AI biết màn hình đang hiện gì (hỏi "khoản này", "tháng này" là hiểu)
     setAiContext([
       `Trang Tổng quan, ${monthLabel(monthKey)}.`,
-      `Thu ${formatVnd(cur.income)}, Chi (tiền thật ra khỏi túi) ${formatVnd(cur.out)}, Còn lại ${formatVnd(balance)}, Nợ tháng sau ${formatVnd(cur.deferred)}.`,
+      `Thu ${formatVnd(cur.income)}, Chi ${formatVnd(cur.out)} (tính theo tháng trả thật: tiền mặt/ngân hàng ${formatVnd(cur.cashOut)} + thẻ/ví đến hạn ${formatVnd(cur.cardDue)}), Còn lại ${formatVnd(balance)}, phải trả tháng sau ${formatVnd(nextDue)}${later ? `, sau đó ${formatVnd(later)}` : ''}.`,
       `Tiền đang có ${formatVnd(cashNow)}, nợ thẻ/ví ${formatVnd(debtNow)}, tài sản ròng ${formatVnd(cashNow - debtNow)}.`,
       overRows.length ? `Vượt ngân sách: ${overRows.map((r) => `${r.name} +${formatVnd(r.over)}`).join(', ')}.` : 'Không mục nào vượt ngân sách.',
       `Dòng tiền 6 tháng: ${flows.map((f) => `${shortMonth(f.mk)} thu ${formatVnd(f.income)}/chi ${formatVnd(f.out)}`).join('; ')}.`,
@@ -298,7 +309,7 @@ function catDrillHtml(id, { monthKey, prevMk, categories, expenses, prevExp, bMa
   const spent = sum(txs);
   const prevSpent = sum(prevExp.filter((t) => t.category === id));
   const limit = bMap[id]?.active.monthlyAmount || 0;
-  const link = `transactions.html?month=${monthKey}&type=expense&cat=${encodeURIComponent(id)}`;
+  const link = `transactions.html?month=${monthKey}&basis=due&type=expense&cat=${encodeURIComponent(id)}`;
 
   const stats = [
     ['Số lần chi', `${txs.length} lần`],
@@ -312,14 +323,17 @@ function catDrillHtml(id, { monthKey, prevMk, categories, expenses, prevExp, bMa
   let note = '';
   let crossId = null;
   if (limit) {
-    const asc = [...txs].sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
+    // Khoản thẻ/ví đến hạn là tiền phải trả của CHÍNH tháng này → xếp ở đầu tháng (không theo ngày quẹt tháng trước)
+    const key = (t) => (t.dueMonth && t.date.slice(0, 7) !== monthKey ? `${monthKey}-00` : t.date);
+    const asc = [...txs].sort((a, b) => (key(a) < key(b) ? -1 : key(a) > key(b) ? 1 : 0));
     let run = 0;
     for (const t of asc) { run += t.amount; if (run > limit) { crossId = t.id; break; } }
     const cross = asc.find((t) => t.id === crossId);
     if (cross) {
       const after = asc.slice(asc.indexOf(cross) + 1);
-      note = `<div class="drill-note danger">Vượt hạn mức <b class="money">${formatVnd(limit)}</b> từ <b>${formatDateVn(cross.date)}</b>
-        (khoản <b class="money">${formatVnd(cross.amount)}</b>${cross.note ? ` · ${esc(cross.note)}` : ''})${after.length ? ` · sau đó thêm ${after.length} khoản <b class="money">${formatVnd(sum(after))}</b>` : ''}.</div>`;
+      const early = key(cross).endsWith('-00');
+      note = `<div class="drill-note danger">Vượt hạn mức <b class="money">${formatVnd(limit)}</b> ${early ? '<b>ngay đầu tháng</b> khi cộng khoản thẻ/ví đến hạn' : `từ <b>${formatDateVn(cross.date)}</b>`}
+        (khoản <b class="money">${formatVnd(cross.amount)}</b>${cross.note ? ` · ${esc(cross.note)}` : ''}${early ? `, quẹt ${formatDateVn(cross.date)}` : ''})${after.length ? ` · sau đó thêm ${after.length} khoản <b class="money">${formatVnd(sum(after))}</b>` : ''}.</div>`;
     } else if (dayOfMonth) {
       const daysLeft = daysIn - dayOfMonth + 1;
       note = `<div class="drill-note">Còn <b class="money">${formatVnd(limit - spent)}</b> cho ${daysLeft} ngày cuối tháng → tiêu tối đa ~<b class="money">${formatVnd(Math.floor((limit - spent) / daysLeft))}</b>/ngày.</div>`;

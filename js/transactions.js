@@ -1,5 +1,5 @@
 import { renderNav, requireToken, showError, icon, toast } from './nav.js';
-import { loadCategories, loadTransactions, loadTransactionsRange, formatVnd, currentMonthKey, categoryName, categoryIcon, shiftMonthKey, paymentMethodName, priorityName, formatDateVn } from './store.js';
+import { loadCategories, loadTransactions, loadTransactionsRange, formatVnd, currentMonthKey, categoryName, categoryIcon, shiftMonthKey, paymentMethodName, priorityName, formatDateVn, debtMethodMap, effectiveMonth } from './store.js';
 import { esc } from './ai-client.js';
 import { txRowHtml, openTxDetail, dayLabel, hydrateIcons, txTitle } from './ui.js';
 import { setAiContext } from './ai-drawer.js';
@@ -15,6 +15,8 @@ const params = new URLSearchParams(location.search);
 let monthKey = params.get('month') || currentMonthKey();
 let categories = null;
 let transactions = [];
+// basis=due: xem theo THÁNG TÍNH (khoản quẹt thẻ/ví vào tháng phải trả) — khớp số trên Tổng quan
+let basisDue = params.get('basis') === 'due';
 
 const F = {
   type: $('filter-type'), cat: $('filter-category'), pay: $('filter-payment'), prio: $('filter-priority'),
@@ -132,12 +134,28 @@ async function load() {
   $('tx-list').innerHTML = '';
   try {
     const fromMk = F.from.value ? F.from.value.slice(0, 7) : undefined;
+    const due = basisDue && !range;
     const [c, tx] = await Promise.all([
       loadCategories(),
-      range ? loadTransactionsRange(fromMk) : loadTransactions(monthKey).then((r) => r.transactions),
+      range ? loadTransactionsRange(fromMk)
+        : due ? loadTransactionsRange(shiftMonthKey(monthKey, -3))
+        : loadTransactions(monthKey).then((r) => r.transactions),
     ]);
     categories = c.categories;
-    transactions = tx;
+    if (due) {
+      const dm = debtMethodMap(categories);
+      transactions = tx.filter((t) => (t.type === 'transfer' ? t.date.slice(0, 7) : effectiveMonth(t, dm)) === monthKey);
+    } else transactions = tx;
+    const dm0 = debtMethodMap(categories);
+    const shifted = !due && !range ? transactions.filter((t) => t.type !== 'transfer' && effectiveMonth(t, dm0) !== monthKey) : [];
+    $('due-banner').hidden = !due && !shifted.length;
+    if (due) $('due-banner').innerHTML = `<span>💳</span><span>Đang xem theo <b>tháng tính</b>: khoản quẹt thẻ/ví nằm ở tháng phải trả (giống số trên Tổng quan). <a href="#" data-basis="off">Xem theo ngày quẹt</a></span>`;
+    else if (shifted.length) $('due-banner').innerHTML = `<span>💳</span><span>Đang xem theo <b>ngày quẹt</b>. Có ${shifted.length} khoản thẻ/ví (${formatVnd(shifted.reduce((x, t) => x + t.amount, 0))}) tính vào tháng khác, nên tổng ở đây khác Tổng quan. <a href="#" data-basis="due">Xem theo tháng tính</a></span>`;
+    $('due-banner').querySelector('[data-basis]')?.addEventListener('click', (e) => {
+      e.preventDefault(); basisDue = e.currentTarget.dataset.basis === 'due';
+      const u = new URLSearchParams(location.search); if (basisDue) u.set('basis', 'due'); else u.delete('basis');
+      history.replaceState(null, '', `?${u}`); load();
+    });
     populateFilterOptions();
     applyUrlFilters();
     $('loading').hidden = true;
@@ -190,6 +208,7 @@ $('export-csv').onclick = exportCsv;
 const goMonth = (d) => {
   monthKey = shiftMonthKey(monthKey, d);
   const u = new URLSearchParams({ month: monthKey });
+  if (basisDue) u.set('basis', 'due');
   [['type', F.type], ['cat', F.cat], ['pay', F.pay], ['prio', F.prio]].forEach(([k, el]) => { if (el.value) u.set(k, el.value); });
   history.replaceState(null, '', `?${u}`);
   load();

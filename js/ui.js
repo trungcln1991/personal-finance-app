@@ -1,7 +1,7 @@
 // Mảnh giao diện dùng chung: dòng giao dịch, bảng chi tiết, tên ngày.
 import { icon, openSheet, toast, showError } from './nav.js';
 import { esc } from './ai-client.js';
-import { formatVnd, categoryName, categoryIcon, paymentMethodName, priorityName, deleteTransaction, formatDateVn, todayDateStr } from './store.js';
+import { formatVnd, categoryName, categoryIcon, paymentMethodName, priorityName, deleteTransaction, formatDateVn, todayDateStr, debtMethodMap, effectiveMonth, statementDueDate } from './store.js';
 
 const WD = ['Chủ nhật', 'Thứ 2', 'Thứ 3', 'Thứ 4', 'Thứ 5', 'Thứ 6', 'Thứ 7'];
 
@@ -23,6 +23,15 @@ export function txTitle(t, categories) {
   return categoryName(categories, t.type, t.category);
 }
 
+// Khoản quẹt thẻ/ví: tính vào tháng phải trả (không phải tháng quẹt) → nhãn nhỏ cho dễ thấy
+const _dm = new WeakMap();
+const debtMapOf = (categories) => { if (!_dm.has(categories)) _dm.set(categories, debtMethodMap(categories)); return _dm.get(categories); };
+export function dueTag(t, categories) {
+  if (t.type === 'transfer') return '';
+  const eff = effectiveMonth(t, debtMapOf(categories));
+  return eff !== t.date.slice(0, 7) ? `💳 tính vào T${Number(eff.slice(5))}` : '';
+}
+
 export function txRowHtml(t, categories, { showDate = false } = {}) {
   const isTr = t.type === 'transfer';
   const ico = isTr ? icon('swap') : t.type === 'income' ? '💰' : categoryIcon(t.category);
@@ -33,9 +42,10 @@ export function txRowHtml(t, categories, { showDate = false } = {}) {
     t.note || '',
     !isTr && t.paymentMethod ? paymentMethodName(categories, t.paymentMethod) : '',
   ].filter(Boolean).join(' · ');
+  const tag = dueTag(t, categories);
   return `<button type="button" class="tx-item" data-id="${esc(t.id)}">
       <span class="cat-ico ${icoCls}">${ico}</span>
-      <span class="tx-info"><b>${esc(txTitle(t, categories))}</b><span>${esc(sub || (isTr ? 'Chuyển khoản' : '—'))}</span></span>
+      <span class="tx-info"><b>${esc(txTitle(t, categories))}</b><span>${esc(sub || (isTr ? 'Chuyển khoản' : '—'))}</span>${tag ? `<span class="due-tag">${tag}</span>` : ''}</span>
       <span class="tx-amt ${t.type} money">${sign}${formatVnd(t.amount)}${isTr ? '<small>Chuyển khoản</small>' : ''}</span>
     </button>`;
 }
@@ -52,6 +62,8 @@ export function openTxDetail(t, categories, onChanged) {
     isTr ? ['Từ', paymentMethodName(categories, t.fromPayment)] : ['Danh mục', categoryName(categories, t.type, t.category)],
     isTr ? ['Đến', paymentMethodName(categories, t.toPayment)] : ['Thanh toán', t.paymentMethod ? paymentMethodName(categories, t.paymentMethod) : '—'],
     t.type === 'expense' ? ['Mức độ', priorityName(categories, t.priority || 'nice')] : null,
+    dueTag(t, categories) ? ['Tính vào', (() => { const p = debtMapOf(categories).get(t.paymentMethod);
+      return `${dueTag(t, categories).replace('💳 tính vào ', 'Tháng ')}${p.statementDay && p.dueDay ? ` · hạn trả ${formatDateVn(statementDueDate(p, t.date))}` : ' (chưa đặt ngày chốt sao kê)'}`; })()] : null,
     t.note ? ['Ghi chú', t.note] : null,
     t.defaultIncomeId ? ['Nguồn', 'Tự thêm (thu nhập mặc định)'] : null,
   ].filter(Boolean);

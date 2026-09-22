@@ -32,6 +32,11 @@ DEV_NO_AUTH = os.getenv("DEV_NO_AUTH") == "1"  # chỉ dùng khi chạy thử tr
 BRIDGE_HOST = os.getenv("BRIDGE_HOST", "trungcln@10.10.10.104")
 BRIDGE_KEY = os.getenv("BRIDGE_KEY", "/keys/id_ed25519_bridge")
 AI_DAILY_LIMIT = int(os.getenv("AI_DAILY_LIMIT", "150"))  # trợ lý hội thoại: mỗi câu nói = 1 lượt
+# 22/09/2026: trợ lý giao tiếp cần NHANH — model/effort riêng, system prompt ngắn thay cho system prompt dài của Claude Code
+AI_AGENT_MODEL = os.getenv("AI_AGENT_MODEL", "claude-opus-5")  # đo 22/09: Opus low 4,9s ≈ Sonnet low 4,6s, Opus trả lời đủ ý hơn
+AI_AGENT_EFFORT = os.getenv("AI_AGENT_EFFORT", "low")
+FAST_SYSTEM = ("Bạn là trợ lý tài chính gia đình trong app Sổ Thu Chi. Làm đúng yêu cầu trong tin nhắn, trả đúng định dạng được yêu cầu. "
+               "Mọi con số phải lấy nguyên văn từ dữ liệu được cung cấp, không tự cộng lại, không bịa.")
 
 app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
 _lock = threading.Lock()
@@ -143,34 +148,184 @@ def _month_keys(n=3):
     return out
 
 
-def _finance_context() -> str:
+# ── Cách tính tiền — BẢN SAO 1:1 của js/store.js (statementDueDate/effectiveMonth/monthSummary/debtSchedule/
+#    computeAccountBalances). Sửa công thức bên đó thì sửa cả ở đây; test đối chiếu JS↔Python trong scratchpad. ──
+import calendar
+
+
+def _dim(y, m):
+    return calendar.monthrange(y, m)[1]
+
+
+def _add_m(y, m, d):
+    k = y * 12 + (m - 1) + d
+    return k // 12, k % 12 + 1
+
+
+def _norm_pm(p):
+    b = {"type": "cash", "owner": "shared", "initialBalance": 0, "initialBalanceDate": None, "openingDebt": 0,
+         "openingDebtDate": None, "statementDay": None, "dueDay": None, **p}
+    if not b.get("openingDebtDate") and b.get("lastPaidMonth"):
+        y, m = map(int, b["lastPaidMonth"].split("-")); y, m = _add_m(y, m, 1)
+        b["openingDebt"], b["openingDebtDate"] = 0, f"{y}-{m:02d}-01"
+    b["openingDebt"] = b.get("openingDebt") or 0
+    b["initialBalance"] = b.get("initialBalance") or 0
+    return b
+
+
+def _debt_map(cats):
+    return {p["id"]: p for p in map(_norm_pm, cats.get("paymentMethods", [])) if p["type"] in ("credit", "wallet")}
+
+
+def _due_date(p, ds):
+    y, m, d = map(int, ds.split("-"))
+    if not (p.get("statementDay") and p.get("dueDay")):
+        y, m = _add_m(y, m, 1); return f"{y}-{m:02d}-01"
+    if d > min(p["statementDay"], _dim(y, m)):
+        y, m = _add_m(y, m, 1)
+    y, m = _add_m(y, m, 1)
+    return f"{y}-{m:02d}-{min(p['dueDay'], _dim(y, m)):02d}"
+
+
+def _eff_month(t, dm):
+    p = dm.get(t.get("paymentMethod")) if t.get("type") != "transfer" else None
+    if not p or (p.get("openingDebtDate") and t["date"] < p["openingDebtDate"]):
+        return t["date"][:7]
+    return _due_date(p, t["date"])[:7]
+
+
+def _month_summary(all_tx, mk, dm):
+    inc = cash = card = paid = 0; exp = []
+    for t in all_tx:
+        if t.get("type") == "transfer":
+            if t["date"][:7] == mk and t.get("toPayment") in dm and t.get("fromPayment") not in dm:
+                paid += t["amount"]
+            continue
+        if _eff_month(t, dm) != mk:
+            continue
+        via = t.get("paymentMethod") in dm
+        if t["type"] == "income":
+            inc += t["amount"]; continue
+        if t["type"] != "expense":
+            continue
+        exp.append({**t, "dueMonth": mk} if via else t)
+        if via: card += t["amount"]
+        else: cash += t["amount"]
+    return {"income": inc, "out": cash + card, "cashOut": cash, "cardDue": card, "debtPaid": paid, "expenseList": exp}
+
+
+def _debt_schedule(cats, all_tx, mk, until):
+    dm = _debt_map(cats); y, m = map(int, mk.split("-")); ny, nm = _add_m(y, m, 1); nxt = f"{ny}-{nm:02d}"
+    rows = []
+    for p in dm.values():
+        if not p.get("openingDebtDate"):
+            continue
+        by = defaultdict(int)
+        if p["openingDebt"]:
+            by[p["openingDebtDate"][:7]] += p["openingDebt"]
+        paid = 0
+        for t in all_tx:
+            if t["date"] < p["openingDebtDate"] or t["date"] > until:
+                continue
+            if t["type"] == "expense" and t.get("paymentMethod") == p["id"]: by[_eff_month(t, dm)] += t["amount"]
+            elif t["type"] == "transfer" and t.get("fromPayment") == p["id"]: by[_due_date(p, t["date"])[:7]] += t["amount"]
+            elif t["type"] == "transfer" and t.get("toPayment") == p["id"]: paid += t["amount"]
+            elif t["type"] == "income" and t.get("paymentMethod") == p["id"]: paid += t["amount"]
+        thr = lambda k: sum(a for kk, a in by.items() if kk <= k)
+        total = thr("9999-12"); unp = lambda k: max(0, thr(k) - paid)
+        due_day = None
+        if p.get("dueDay"):
+            due_day = f"{min(p['dueDay'], _dim(ny, nm)):02d}/{nm:02d}/{ny}"
+        rows.append({"id": p["id"], "name": p.get("name", p["id"]), "unpaidDue": unp(mk), "nextDue": unp(nxt) - unp(mk),
+                     "later": max(0, total - paid) - unp(nxt), "total": total - paid, "nextDueDate": due_day})
+    return rows
+
+
+def _balances(cats, all_tx):
+    out = []
+    for p in map(_norm_pm, cats.get("paymentMethods", [])):
+        if p["type"] not in ("cash", "bank"):
+            continue
+        if not p.get("initialBalanceDate"):
+            out.append({**p, "balance": None}); continue
+        d = 0
+        for t in all_tx:
+            if t["date"] < p["initialBalanceDate"] or t.get("excludeFromBalance"):
+                continue
+            if t["type"] == "transfer":
+                d += t["amount"] if t.get("toPayment") == p["id"] else -t["amount"] if t.get("fromPayment") == p["id"] else 0
+            elif t.get("paymentMethod") == p["id"]:
+                d += t["amount"] if t["type"] == "income" else -t["amount"]
+        out.append({**p, "balance": p["initialBalance"] + d})
+    return out
+
+
+def _all_tx():
+    d = REPO / "transactions"
+    return [t for f in sorted(d.glob("*.json")) for t in (_load(f"transactions/{f.name}", []) or [])]
+
+
+def _vnd(n):
+    return f"{n:,.0f}".replace(",", ".") + "đ"
+
+
+def _finance_context(detail_rows: bool = True) -> str:
+    """Số liệu CHÍNH XÁC tính bằng đúng công thức của app — AI đọc nguyên văn, không tự cộng lại."""
     cats = _load("categories.json", {}) or {}
     name = {("income", c["id"]): c["name"] for c in cats.get("income", [])}
     name.update({("expense", c["id"]): c["name"] for c in cats.get("expense", [])})
     pm = {p["id"]: p.get("name", p["id"]) for p in cats.get("paymentMethods", [])}
     budget = _load("budget.json", {}) or {}
-    cur = date.today().strftime("%Y-%m")
-    lines = [f"Hôm nay: {date.today().isoformat()} (tháng {cur}, đã qua {date.today().day} ngày)."]
+    all_tx = _all_tx(); dm = _debt_map(cats)
+    today = date.today(); ts = today.isoformat(); cur = ts[:7]
+    V = _vnd
+    wd = ["Thứ Hai", "Thứ Ba", "Thứ Tư", "Thứ Năm", "Thứ Sáu", "Thứ Bảy", "Chủ Nhật"]
+    mon = today - timedelta(days=today.weekday())
+    L = [f"Hôm nay: {wd[today.weekday()]} {today.strftime('%d/%m/%Y')} ({ts}; tháng {cur}, đã qua {today.day}/{_dim(today.year, today.month)} ngày). "
+         f"\"Tuần này\" = từ {wd[0]} {mon.strftime('%d/%m')} đến hôm nay; \"hôm qua\" = {(today - timedelta(days=1)).strftime('%d/%m')}.",
+         "CÁCH APP TÍNH (bắt buộc dùng đúng): khoản quẹt THẺ TÍN DỤNG / VÍ TRẢ SAU tính vào THÁNG PHẢI TRẢ theo sao kê, KHÔNG phải tháng quẹt "
+         "(HSBC chốt ngày 14, hạn ngày 5 tháng sau → quẹt 1–14 trả tháng sau, quẹt 15–cuối tháng trả tháng sau nữa; Mono chốt cuối tháng, hạn ngày 10 tháng sau). "
+         "«Chi» của 1 tháng = chi tiền mặt/ngân hàng trong tháng + khoản thẻ/ví đến hạn trong tháng = đúng tổng theo danh mục & ngân sách. "
+         "Tiền trả nợ thẻ là trả cho khoản đã tính rồi, KHÔNG cộng thêm vào Chi."]
+    bals = _balances(cats, all_tx)
+    L.append("TIỀN ĐANG CÓ HÔM NAY: " + "; ".join(f"{b['name']} {V(b['balance']) if b['balance'] is not None else 'chưa cấu hình'}" for b in bals)
+             + f" → tổng {V(sum(b['balance'] or 0 for b in bals))}.")
+    for r in _debt_schedule(cats, all_tx, cur, ts):
+        L.append(f"NỢ {r['name']}: tổng nợ {V(r['total'])}; đã tới hạn mà chưa trả {V(r['unpaidDue'])}; "
+                 f"phải trả tháng sau {V(r['nextDue'])}{' (hạn ' + r['nextDueDate'] + ')' if r['nextDueDate'] and r['nextDue'] else ''}; "
+                 f"trả các tháng sau nữa {V(r['later'])}.")
+    ym = [cur]
+    for _ in range(2):
+        y, m = map(int, ym[-1].split("-")); y, m = _add_m(y, m, -1); ym.append(f"{y}-{m:02d}")
+    y, m = map(int, cur.split("-")); y, m = _add_m(y, m, 1); nxt = f"{y}-{m:02d}"
+    for mk in ym:
+        s = _month_summary(all_tx, mk, dm)
+        by = defaultdict(int)
+        for t in s["expenseList"]:
+            by[name.get(("expense", t.get("category")), t.get("category"))] += t["amount"]
+        top = ", ".join(f"{k} {V(v)}" for k, v in sorted(by.items(), key=lambda x: -x[1]))
+        L.append(f"THÁNG {mk}: Thu {V(s['income'])} · Chi {V(s['out'])} (tiền mặt/ngân hàng {V(s['cashOut'])} + thẻ/ví đến hạn {V(s['cardDue'])}) "
+                 f"· đã chuyển trả nợ thẻ/ví {V(s['debtPaid'])} · Thu − Chi {V(s['income'] - s['out'])}. Chi theo danh mục: {top or 'chưa có'}.")
+    ns = _month_summary(all_tx, nxt, dm)
+    L.append(f"THÁNG {nxt} (sắp tới): đã có sẵn {V(ns['cardDue'])} khoản thẻ/ví đến hạn.")
+    s = _month_summary(all_tx, cur, dm); spent = defaultdict(int)
+    for t in s["expenseList"]:
+        spent[t.get("category")] += t["amount"]
     blines = []
     for cid, b in (budget.get("categories") or {}).items():
-        vs = [v for v in b.get("versions", []) if v.get("from", "") <= cur]
-        if vs: blines.append(f"{b.get('name', cid)}: {vs[-1].get('monthlyAmount', 0):,}đ")
-    if blines: lines.append("Ngân sách tháng theo danh mục: " + "; ".join(blines))
-    for mk in _month_keys(3):
-        tx = _load(f"transactions/{mk}.json", []) or []
-        inc = sum(t.get("amount", 0) for t in tx if t.get("type") == "income")
-        exp = sum(t.get("amount", 0) for t in tx if t.get("type") == "expense")
-        by = defaultdict(int)
-        for t in tx:
-            if t.get("type") == "expense": by[name.get(("expense", t.get("category")), t.get("category"))] += t.get("amount", 0)
-        top = ", ".join(f"{k} {v:,}đ" for k, v in sorted(by.items(), key=lambda x: -x[1]))
-        lines.append(f"Tháng {mk}: thu {inc:,}đ · chi {exp:,}đ · {len(tx)} giao dịch. Chi theo danh mục: {top}")
-    tx = _load(f"transactions/{cur}.json", []) or []
-    lines.append(f"Chi tiết giao dịch tháng {cur} (ngày|loại|danh mục|số tiền|ghi chú|thanh toán):")
-    for t in sorted(tx, key=lambda t: t.get("date", ""))[-200:]:
-        lines.append(f"{t.get('date')}|{t.get('type')}|{name.get((t.get('type'), t.get('category')), t.get('category', ''))}|"
-                     f"{t.get('amount', 0):,}|{(t.get('note') or '')[:60]}|{pm.get(t.get('paymentMethod'), t.get('paymentMethod', ''))}")
-    return "\n".join(lines)[:30000]
+        vs = [v for v in b.get("versions", []) if v.get("from", "") <= cur and (not v.get("until") or cur <= v["until"])]
+        if vs:
+            lim = max(vs, key=lambda v: v["from"]).get("monthlyAmount", 0); sp = spent.get(cid, 0)
+            blines.append(f"{b.get('name', cid)}: đã chi {V(sp)} / ngân sách {V(lim)} ({'VƯỢT ' + V(sp - lim) if sp > lim else 'còn ' + V(lim - sp)})")
+    if blines:
+        L.append(f"NGÂN SÁCH THÁNG {cur}: " + "; ".join(blines))
+    if detail_rows:
+        L.append(f"Chi tiết giao dịch tháng {cur} theo ngày quẹt (ngày|loại|danh mục|số tiền|ghi chú|thanh toán|tính vào tháng):")
+        for t in sorted([t for t in all_tx if t["date"][:7] == cur], key=lambda t: t.get("date", ""))[-200:]:
+            L.append(f"{t.get('date')}|{t.get('type')}|{name.get((t.get('type'), t.get('category')), t.get('category', ''))}|"
+                     f"{t.get('amount', 0):,}|{(t.get('note') or '')[:60]}|{pm.get(t.get('paymentMethod'), t.get('paymentMethod', ''))}|"
+                     f"{_eff_month(t, dm) if t.get('type') != 'transfer' else ''}")
+    return "\n".join(L)[:30000]
 
 
 def _categories_brief() -> str:
@@ -211,11 +366,13 @@ IMAGE_PROMPT = ("Đọc ảnh chi tiêu (hoá đơn, bill, ảnh chụp màn hì
 
 def _tx_index(months: int = 2) -> str:
     """Giao dịch N tháng gần nhất KÈM id — để trợ lý chỉ đúng khoản cần sửa/xoá."""
-    out = ["id|ngày|loại|danh mục id|số tiền|thanh toán id|từ|đến|mức độ|ghi chú"]
+    dm = _debt_map(_load("categories.json", {}) or {})
+    out = ["id|ngày|loại|danh mục id|số tiền|thanh toán id|từ|đến|mức độ|ghi chú|tính vào tháng"]
     for mk in _month_keys(months):
         for t in sorted(_load(f"transactions/{mk}.json", []) or [], key=lambda t: t.get("date", ""), reverse=True):
             out.append("|".join(str(t.get(k) or "") for k in ("id", "date", "type", "category", "amount", "paymentMethod",
-                                                              "fromPayment", "toPayment", "priority")) + "|" + (t.get("note") or "")[:50])
+                                                              "fromPayment", "toPayment", "priority")) + "|" + (t.get("note") or "")[:50]
+                       + "|" + (_eff_month(t, dm) if t.get("type") != "transfer" else ""))
     return "\n".join(out[:400])
 
 
@@ -232,7 +389,10 @@ Nguyên tắc:
   BẮT BUỘC nhất quán: hễ "say" hỏi "Lưu nhé?"/"Xoá nhé?" thì ready PHẢI là true (ready=false chỉ khi còn đang HỎI thông tin thiếu).
 - Người dùng từ chối hoặc muốn sửa → cập nhật draft theo ý họ, ready=true lại khi đủ.
 - "say" để ĐỌC TO: tối đa 2 câu, tự nhiên, không markdown, số tiền đọc kiểu "50 nghìn", "1 triệu 2".
-- Tra cứu: trả lời ngắn trong "say", chi tiết (bảng/gạch đầu dòng Markdown) để trong "detail". Chỉ dùng số liệu có thật.
+- Tra cứu: trả lời ngắn trong "say" bằng SỐ CÓ SẴN trong phần SỐ LIỆU (tiền đang có, nợ, Chi tháng, ngân sách) — không tự cộng lại.
+  Hỏi "chi tháng này" = dùng đúng số «Chi» của tháng. Chỉ khi hỏi 1 danh mục/khoảng ngày cụ thể mới được cộng từ danh sách giao dịch.
+  "Khoản chi lớn nhất" = 1 GIAO DỊCH đơn lẻ (xem danh sách), khác "danh mục chi nhiều nhất".
+  "detail" chỉ khi thật cần (tối đa 6 dòng Markdown), còn lại để rỗng — trả lời càng ngắn càng nhanh.
 - Chỉ dùng id danh mục/phương thức trong danh sách hợp lệ.
 
 DANH MỤC & PHƯƠNG THỨC HỢP LỆ: {cats}
@@ -268,13 +428,27 @@ AGENT_IMAGE_NOTE = """ẢNH NGƯỜI DÙNG VỪA GỬI ({n} ảnh — hoá đơn
 """
 
 
-def _bridge(prompt: str, images: list | None = None) -> str:
-    if images:  # cầu nối CT104 nhận ảnh qua phong bì JSON (19/09/2026)
-        prompt = json.dumps({"__bridge": 1, "prompt": prompt, "images": images})
+def _bridge(prompt: str, images: list | None = None, fast: bool = False) -> str:
+    # Phong bì JSON cho cầu nối CT104: ảnh (19/09) + model/effort/system prompt ngắn khi cần nhanh (22/09)
+    if images or fast:
+        env = {"__bridge": 1, "prompt": prompt, "images": images or []}
+        if fast:
+            env.update(model=AI_AGENT_MODEL, effort=AI_AGENT_EFFORT, system=FAST_SYSTEM)
+        prompt = json.dumps(env)
     r = subprocess.run(["ssh", "-i", BRIDGE_KEY, "-o", "BatchMode=yes", "-o", "ConnectTimeout=15",
                         "-o", "StrictHostKeyChecking=accept-new", "-o", f"UserKnownHostsFile={Path(BRIDGE_KEY).parent / 'known_hosts'}",
                         BRIDGE_HOST], input=prompt, capture_output=True, text=True, timeout=600)
     if r.returncode != 0 or not r.stdout.strip():
+        err = (r.stderr or "").strip()
+        m = re.search(r"resets\s+([0-9:]+\s*[ap]m)\s*\(UTC\)", err, re.I)
+        if m:  # đổi giờ mở lại từ UTC sang giờ VN cho dễ hiểu
+            try:
+                t = datetime.strptime(m.group(1).replace(" ", "").upper(), "%I:%M%p") + timedelta(hours=7)
+                raise RuntimeError(f"Claude đã hết hạn mức phiên — mở lại lúc {t.strftime('%H:%M')} (giờ VN). Trong lúc chờ vẫn nhập tay bình thường.")
+            except ValueError:
+                pass
+        if re.search(r"limit|429", err, re.I):
+            raise RuntimeError("Claude đang hết hạn mức — thử lại sau. Trong lúc chờ vẫn nhập tay bình thường.")
         raise RuntimeError("Không gọi được Claude (cầu nối CT104)")
     return r.stdout.strip()
 
@@ -285,9 +459,9 @@ def _run_ai(jid: str, mode: str, text: str, history: list, who: str = "bạn", p
             conv = "\n".join(f"{who if h.get('role') == 'user' else 'Trợ lý'}: {h.get('content', '')}" for h in history[-14:])
             page_note = f"NGƯỜI DÙNG ĐANG XEM: {page[:1000]}\n\n" if page else ""
             img_note = AGENT_IMAGE_NOTE.format(n=len(images)) if images else ""
-            raw = _bridge(AGENT_PROMPT.format(who=who, today=date.today().isoformat(), cats=_categories_brief(), ctx=_finance_context()[:12000],
+            raw = _bridge(AGENT_PROMPT.format(who=who, today=date.today().isoformat(), cats=_categories_brief(), ctx=_finance_context(detail_rows=False)[:12000],
                                               index=_tx_index(), page=page_note, images=img_note, conv=conv,
-                                              text=text[:1500] or "(chỉ gửi ảnh, không ghi chú)"), images or None)
+                                              text=text[:1500] or "(chỉ gửi ảnh, không ghi chú)"), images or None, fast=True)
             try:
                 res = {"agent": json.loads(raw[raw.find("{"):raw.rfind("}") + 1])}
             except Exception:  # AI không trả JSON → coi như câu trả lời thường

@@ -643,3 +643,9 @@ button.over-row:hover { background: rgba(0, 0, 0, .05); text-decoration: underli
 .ai-drawer .ai-table table { width: max-content; min-width: 100%; }
 .ai-drawer .ai-table th { white-space: nowrap; }
 .ai-drawer .ai-table td { max-width: 220px; }
+/* Nhãn "💳 tính vào T10" cho khoản quẹt thẻ/ví (22/09/2026) */
+.tx-info .due-tag { display: inline-block; width: fit-content; margin-top: 2px; padding: 1px 7px; border-radius: 999px; font-size: 11px; font-weight: 600;
+  background: var(--brand-soft); color: var(--brand); }
+.due-banner { display: flex; gap: 8px; align-items: flex-start; padding: 10px 12px; margin-bottom: 12px; border-radius: 12px; font-size: 13px;
+  background: var(--brand-soft); color: var(--text); border: 1px solid var(--border); }
+.due-banner[hidden] { display: none; }
