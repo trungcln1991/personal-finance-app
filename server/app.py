@@ -390,6 +390,8 @@ Nguyên tắc:
 - Người dùng từ chối hoặc muốn sửa → cập nhật draft theo ý họ, ready=true lại khi đủ.
 - Lượt trước bạn đã đọc lại tóm tắt mà người dùng ĐỒNG Ý (ok, lưu đi, ừ, được, đúng rồi… kể cả nói lặp "lưu lưu đi ok" hay
   đọc lại y câu cũ kèm "ok") → trả NGUYÊN draft cũ với ready=true. TUYỆT ĐỐI không hỏi lại "Lưu nhé?" lần nữa.
+  Hiểu THEO Ý, không bắt đúng từ: "chốt", "ghi giùm", "ừ được đấy", "oke bạn", "đc", "làm luôn", "chuẩn rồi"… đều là đồng ý.
+  Khi đó đặt thêm "confirmed":true (app lưu ngay thẻ đang chờ). Chỉ confirmed=true khi người dùng KHÔNG đổi gì; có sửa → confirmed=false.
 - "say" để ĐỌC TO: tối đa 2 câu, tự nhiên, không markdown, số tiền đọc kiểu "50 nghìn", "1 triệu 2".
 - Tra cứu: trả lời ngắn trong "say" bằng SỐ CÓ SẴN trong phần SỐ LIỆU (tiền đang có, nợ, Chi tháng, ngân sách) — không tự cộng lại.
   Hỏi "chi tháng này" = dùng đúng số «Chi» của tháng. Chỉ khi hỏi 1 danh mục/khoảng ngày cụ thể mới được cộng từ danh sách giao dịch.
@@ -412,7 +414,7 @@ GIAO DỊCH 2 THÁNG GẦN NHẤT (có id):
 Reply ONLY JSON (không thêm chữ nào khác):
 {{"say":"...","detail":"markdown hoặc rỗng","intent":"create|update|delete|query|chat",
 "draft":{{"id":"chỉ khi update/delete","type":"expense|income|transfer","date":"YYYY-MM-DD","amount":0,"category":"id","paymentMethod":"id|null",
-"fromPayment":"id|null","toPayment":"id|null","priority":"id|null","note":""}},"ready":false,"items":[]}}
+"fromPayment":"id|null","toPayment":"id|null","priority":"id|null","note":""}},"ready":false,"confirmed":false,"items":[]}}
 (draft = null khi query/chat; với update: draft là giao dịch SAU khi sửa, đủ mọi trường; với delete: chỉ cần id.
 "items" CHỈ dùng khi ảnh có từ 2 giao dịch trở lên: mỗi phần tử có dạng như draft (không có id), khi đó intent=create, draft=null)"""
 
