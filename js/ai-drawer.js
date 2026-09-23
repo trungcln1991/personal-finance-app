@@ -103,7 +103,10 @@ async function onSilence() {
     return;
   }
   reprompts++;
-  await say(repromptText());
+  // Nhắc lại y hệt câu trước thì chỉ ĐỌC, không ghi thêm dòng chat (bản cũ để lại 2-3 câu chào trùng nhau)
+  const t = repromptText();
+  const last = [...state.turns].reverse().find((x) => x.role === 'assistant');
+  await say(t, { record: !(last && last.content === t) });
 }
 // Nhắc lại những gì đã có + hỏi cái còn thiếu — không tốn lượt AI
 function repromptText() {
@@ -410,6 +413,26 @@ function flash(t) { const f = $d('#aid-left'); f.textContent = t; setTimeout(() 
 // ── Một lượt hội thoại ──
 const YES = /^(có|co|ok|oke|okay|ừ|ừm|uh|đồng ý|dong y|lưu|luu|xoá|xóa|xoa|được|duoc|đúng|chuẩn|xác nhận|xac nhan|yes|chắc chắn|làm đi)/i;
 const NO = /^(không|khong|ko|thôi|thoi|huỷ|hủy|huy|đừng|sai|no\b|chưa)/i;
+// 23/09: nói bằng giọng hay lặp từ ("Lưu lưu đi lưu đi ok") hoặc đọc lại cả câu rồi thêm "ok" → bản cũ (≤4 từ + mở bằng
+// từ đồng ý) coi là "muốn sửa", huỷ thẻ, hỏi lại AI → AI lại hỏi "Lưu nhé?" → lặp mãi.
+const YES_WORDS = new Set(('có co ok oke okay okie ừ ừm ờ uh ừa vâng dạ đồng ý dong y lưu luu ghi xoá xóa xoa được duoc đúng '
+  + 'chuẩn xác nhận xac nhan yes chắc chắn làm đi luôn nhé nha rồi ạ á đó vậy thế lại cho mình tôi em anh vào giúp nào lâu lẹ '
+  + 'nhanh ngay bố mẹ con').split(' '));
+const EDIT = /(nhưng|đổi thành|đổi lại|sửa thành|sửa lại|không phải|chứ không|mà là|nhầm|thay vì)/i;
+const ASK_SAVE = /(lưu|ghi|cập nhật|thêm)[^?]{0,160}(nhé|nha|không|ko|chứ|ạ|hả|chưa)\s*\?\s*$/i;   // AI đang hỏi "…lưu nhé?"
+const ENDS_YES =/(^| )(ok|oke|okay|lưu đi|lưu luôn|đồng ý|được rồi|ừ|vâng|xác nhận|lưu|xoá đi|xóa đi)$/i;
+// Đồng ý khi: không có từ phủ định/sửa, MỌI con số trong câu khớp số tiền hoặc ngày/tháng của thẻ (đọc lại "20.000" thì
+// được, nói "30 nghìn" là muốn sửa), và (toàn từ đồng ý) hoặc (mở/kết bằng từ đồng ý).
+export function isAffirm(text, amount, date) {
+  const t = (text || '').toLowerCase().normalize('NFC').trim();
+  const w = t.replace(/[.,!?…"'“”]/g, ' ').split(/\s+/).filter(Boolean);
+  if (!w.length || NO.test(t) || EDIT.test(t)) return false;
+  const day = date ? Number(String(date).slice(8, 10)) : null, month = date ? Number(String(date).slice(5, 7)) : null;
+  const nums = (t.match(/\d[\d.,]*/g) || []).map((x) => Number(x.replace(/[.,]/g, ''))).filter((n) => n > 0);
+  if (nums.some((n) => ![n, n * 1000, n * 1e6].includes(amount) && n !== day && n !== month)) return false;
+  if (w.every((x) => YES_WORDS.has(x))) return w.length <= 12;
+  return (YES.test(t) || ENDS_YES.test(w.slice(-2).join(' '))) && w.length <= 16;
+}
 async function handleUserText(text, hidden = false) {
   text = (text || '').trim();
   const imgs = hidden ? [] : attach;
@@ -419,9 +442,28 @@ async function handleUserText(text, hidden = false) {
   // Đang chờ xác nhận: câu ngắn có/không → xử lý luôn (không tốn lượt AI)
   if (state.pending && !hidden && !imgs.length) {
     const short = text.split(/\s+/).length <= 4;
+    const c = state.turns[state.pending.idx];
     if (short && NO.test(text)) { state.turns.push({ role: 'user', content: text }); return confirmPending(false); }
-    if (short && YES.test(text)) { state.turns.push({ role: 'user', content: text }); return confirmPending(true); }
+    if (isAffirm(text, c?.tx?.amount, c?.tx?.date)) { state.turns.push({ role: 'user', content: text }); return confirmPending(true); }
     state.turns[state.pending.idx].status = 'cancel'; state.pending = null;   // nói điều khác = muốn sửa → bỏ thẻ cũ
+  }
+  // Lưới an toàn: AI đã đọc lại tóm tắt + hỏi "...nhé?" nhưng không thành thẻ (quên ready=true) mà người dùng đồng ý
+  // → dựng thẻ từ draft đã có rồi lưu luôn, không hỏi AI thêm vòng nữa.
+  // Chỉ khi câu AI ĐÚNG là câu hỏi lưu (không phải đang hỏi thông tin thiếu) và đã có phương thức thanh toán —
+  // tránh "ok" cho câu "tiền mặt hay thẻ?" thành lưu khoản thiếu PTTT.
+  if (!state.pending && !hidden && !imgs.length && lastAgent && ['create', 'update'].includes(lastAgent.intent)
+      && ASK_SAVE.test(lastAgent.say || '') && (lastAgent.draft || lastAgent.items?.length)) {
+    const d = lastAgent.draft || {};
+    if (isAffirm(text, Math.round(Number(d.amount) || 0), d.date)) {
+      cats ||= (await loadCategories().catch(() => ({ categories: null }))).categories;
+      const card = cats && await buildCard({ ...lastAgent, ready: true }).catch(() => null);
+      const pmOk = !card?.tx || card.tx.type === 'transfer' || card.tx.paymentMethod;
+      if (card && !card.err && pmOk) {
+        state.turns.push({ role: 'user', content: text }, card);
+        state.pending = { idx: state.turns.length - 1 }; lastAgent = null;
+        return confirmPending(true);
+      }
+    }
   }
   if (state.pending && imgs.length) { state.turns[state.pending.idx].status = 'cancel'; state.pending = null; }   // ảnh mới = việc mới
   if (!hidden) state.turns.push(imgs.length ? { role: 'user', content: text, thumbs: imgs.map((im) => im.thumb) } : { role: 'user', content: text });
@@ -445,7 +487,8 @@ async function handleUserText(text, hidden = false) {
     ...(memoData && ['create', 'update'].includes(a.intent) ? { memo: JSON.stringify(memoData).slice(0, 1500) } : {}) });
   let spoken = a.say;
   // AI đôi khi hỏi "Lưu nhé?" nhưng quên đặt ready=true → draft đã đủ + đang hỏi xác nhận thì coi như ready
-  if (!a.ready && ['create', 'update'].includes(a.intent) && cats && /(lưu|ghi|cập nhật|thêm)\s*(nhé|nha|không|ko|chứ)\s*\?/i.test(a.say || '')) {
+  // 23/09: regex cũ chỉ bắt "lưu nhé?" liền nhau — AI nói "Lưu khoản thu 2 triệu …, ghi chú Thủy nhé?" là trượt.
+  if (!a.ready && ['create', 'update'].includes(a.intent) && cats && ASK_SAVE.test(a.say || '')) {
     const d = Array.isArray(a.items) && a.items.length > 1 ? null : a.draft;
     const r = d && normalize(d, {});
     if (r?.tx && (r.tx.type === 'transfer' || r.tx.paymentMethod)) a.ready = true;
