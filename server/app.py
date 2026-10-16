@@ -284,7 +284,7 @@ def _finance_context(detail_rows: bool = True) -> str:
     L = [f"Hôm nay: {wd[today.weekday()]} {today.strftime('%d/%m/%Y')} ({ts}; tháng {cur}, đã qua {today.day}/{_dim(today.year, today.month)} ngày). "
          f"\"Tuần này\" = từ {wd[0]} {mon.strftime('%d/%m')} đến hôm nay; \"hôm qua\" = {(today - timedelta(days=1)).strftime('%d/%m')}.",
          "CÁCH APP TÍNH (bắt buộc dùng đúng): khoản quẹt THẺ TÍN DỤNG / VÍ TRẢ SAU tính vào THÁNG PHẢI TRẢ theo sao kê, KHÔNG phải tháng quẹt "
-         "(HSBC chốt ngày 14, hạn ngày 5 tháng sau → quẹt 1–14 trả tháng sau, quẹt 15–cuối tháng trả tháng sau nữa; Mono chốt cuối tháng, hạn ngày 10 tháng sau). "
+         "(HSBC chốt ngày 14, hạn ngày 5 tháng sau → quẹt 1–14 trả tháng sau, quẹt 15–cuối tháng trả tháng sau nữa; Ví trả sau MoMo (TPBank) chốt cuối tháng, hạn ngày 10 tháng sau). "
          "«Chi» của 1 tháng = chi tiền mặt/ngân hàng trong tháng + khoản thẻ/ví đến hạn trong tháng = đúng tổng theo danh mục & ngân sách. "
          "Tiền trả nợ thẻ là trả cho khoản đã tính rồi, KHÔNG cộng thêm vào Chi."]
     bals = _balances(cats, all_tx)
