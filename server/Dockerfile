@@ -4,7 +4,7 @@ RUN apt-get update -qq && apt-get install -y -qq --no-install-recommends git ope
 WORKDIR /app
 COPY server/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
-COPY server/app.py .
+COPY server/app.py server/mailingest.py ./
 COPY index.html add.html transactions.html settings.html ai.html manifest.json sw.js /app/static/
 COPY css /app/static/css
 COPY js /app/static/js

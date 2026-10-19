@@ -19,6 +19,7 @@ from datetime import date, datetime, timedelta
 from pathlib import Path
 
 import jwt
+import mailingest
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse, Response
 
@@ -537,6 +538,88 @@ def ai_job_status(jid: str, request: Request):
     if j["status"] == "error":
         raise HTTPException(502, j["error"])
     return {"status": "done", **j["result"]}
+
+
+# ── Tự ghi giao dịch từ mail ngân hàng (xem mailingest.py) ──
+# Cloudflare Email Worker POST thư thô lên đây, xác thực bằng Access SERVICE TOKEN (JWT có common_name = Client ID).
+INGEST_AUD = os.getenv("INGEST_AUD", "")  # AUD của Access app RIÊNG cho /api/ingest (khác app chính)
+INGEST_IDS = {e.strip() for e in os.getenv("INGEST_CLIENT_IDS", "").split(",") if e.strip()}
+INGEST_VCB = os.getenv("INGEST_VCB_ACCOUNT", "")      # số TK VCB của mình — khoản chi từ TK khác bị bỏ qua
+INGEST_CARD = os.getenv("INGEST_HSBC_CARD", "")       # 4 số cuối thẻ HSBC
+INGEST_OFF = tuple(x.strip() for x in os.getenv("INGEST_DISABLED_KINDS", "").split(",") if x.strip())  # nguồn tắt, vd apple (trùng MoMo/thẻ)
+INGEST_OWNER = os.getenv("INGEST_OWNER_EMAIL", "")    # email chủ hộp thư: thư chủ tự chuyển tiếp tay (dkim gmail.com) được đọc nội dung thư gốc bên trong
+INGEST_DKIM = os.getenv("INGEST_REQUIRE_DKIM", "1") != "0"  # MẶC ĐỊNH BẬT: thư không có dkim=pass từ máy nhận tin cậy bị bỏ qua (ghi log). Chỉ đặt 0 tạm thời khi chẩn đoán
+INGEST_AUTHSERV = tuple(x.strip() for x in os.getenv("INGEST_TRUSTED_AUTHSERV", "mx.cloudflare.net").split(",") if x.strip())
+INGEST_NOTIFY = os.getenv("INGEST_NOTIFY_URL", "")     # ntfy topic URL (tuỳ chọn): báo mỗi khoản đã ghi
+INGEST_STATE = Path(os.getenv("INGEST_STATE", "/state/ingest-state.json"))  # /state = volume riêng (không mất khi dựng lại container)
+INGEST_LOG = Path(os.getenv("INGEST_LOG", "/state/ingest-log.jsonl"))
+
+
+def require_service(request: Request) -> str:
+    if DEV_NO_AUTH:
+        return "dev"
+    tok = request.headers.get("Cf-Access-Jwt-Assertion")
+    if not tok or not INGEST_IDS or not INGEST_AUD:
+        raise HTTPException(401, "Cần Access service token")
+    try:
+        key = _jwks.get_signing_key_from_jwt(tok).key
+        claims = jwt.decode(tok, key, algorithms=["RS256"], audience=INGEST_AUD, issuer=TEAM)
+    except Exception:
+        raise HTTPException(401, "Service token không hợp lệ")
+    if claims.get("common_name") not in INGEST_IDS:
+        raise HTTPException(403, "Service token này không được phép")
+    return str(claims.get("common_name"))
+
+
+def _ingest_log(rec: dict):
+    rec = {"t": datetime.now().isoformat(timespec="seconds"), **rec}  # KHÔNG ghi nội dung thư, chỉ trạng thái
+    with INGEST_LOG.open("a", encoding="utf-8") as f:
+        f.write(json.dumps(rec, ensure_ascii=False) + "\n")
+
+
+def _ingest_notify(text: str):
+    if not INGEST_NOTIFY:
+        return
+    try:
+        import urllib.request
+        urllib.request.urlopen(urllib.request.Request(INGEST_NOTIFY, data=text.encode("utf-8"),
+                               headers={"Title": "So Thu Chi - mail", "Tags": "receipt"}), timeout=5)
+    except Exception:
+        pass
+
+
+def _ingest_commit(rel: str, message: str):
+    git("add", "--", rel)
+    git("-c", "user.name=So Thu Chi (E5)", "-c", "user.email=mail-ingest@taichinh.local", "commit", "-q", "-m", message)
+
+
+@app.post("/api/ingest")
+async def ingest(request: Request):
+    require_service(request)
+    raw = await request.body()
+    if not raw or len(raw) > 400_000:
+        raise HTTPException(413, "Thư rỗng hoặc quá lớn")
+    entry, why = mailingest.parse_mail(raw, INGEST_VCB, INGEST_CARD, INGEST_DKIM, INGEST_AUTHSERV, INGEST_OWNER, INGEST_OFF)
+    if entry is None:
+        _ingest_log({"status": "ignored", "reason": why})
+        return {"status": "ignored", "reason": why}
+    with _lock:
+        res = mailingest.apply_entry(entry, REPO, INGEST_STATE, _ingest_commit)
+    _ingest_log({k: v for k, v in res.items() if k != "key"} | {"kind": entry["kind"], "via": entry.get("via"), "amount": entry["amount"]})
+    if res["status"] == "added":
+        flag = "" if res.get("known") else " [CAN PHAN LOAI]"
+        _ingest_notify(f"Da ghi: {res['note']} - {res['amount']:,}d{flag}".replace(",", ".") + (f"\nCanh bao: {res['warn']}" if res.get("warn") else ""))
+    elif res.get("warn"):
+        _ingest_notify(f"Canh bao: {res['warn']}")
+    return res
+
+
+@app.get("/api/mail-log")  # KHÔNG đặt dưới /api/ingest/ — path đó thuộc Access app riêng (service token)
+def ingest_log(request: Request):
+    require_access(request)
+    if not INGEST_LOG.is_file():
+        return []
+    return [json.loads(l) for l in INGEST_LOG.read_text(encoding="utf-8").splitlines()[-50:]]
 
 
 @app.get("/api/health")
