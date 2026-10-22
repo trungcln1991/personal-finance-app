@@ -327,5 +327,15 @@ class NewApply(Apply):
         self.assertEqual((seen["hsbc_balance"], seen["hsbc_date"]), (27550677, "2026-10-18"))
 
 
+class Classify(unittest.TestCase):
+    def test_food_and_hospital(self):
+        self.assertEqual(mi.classify("NH PIZZA HUT-CN LONG AN")[0], "tien-an-sang-chieu")
+        self.assertEqual(mi.classify("SHOPEEFOOD")[0], "tien-an-sang-chieu")
+        self.assertEqual(mi.classify("Highlands Coffee")[0], "tien-an-sang-chieu")
+        self.assertEqual(mi.classify("BV NHI DONG TP")[0], "quy-suc-khoe")
+        self.assertEqual(mi.classify("Shopee")[0], "do-dung-gia-dinh")
+        self.assertFalse(mi.classify("HBVX TRADING")[2])  # "BV" phải là nguyên từ
+
+
 if __name__ == "__main__":
     unittest.main()

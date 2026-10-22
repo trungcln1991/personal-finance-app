@@ -287,7 +287,9 @@ def _finance_context(detail_rows: bool = True) -> str:
          "CÁCH APP TÍNH (bắt buộc dùng đúng): khoản quẹt THẺ TÍN DỤNG / VÍ TRẢ SAU tính vào THÁNG PHẢI TRẢ theo sao kê, KHÔNG phải tháng quẹt "
          "(HSBC chốt ngày 14, hạn ngày 5 tháng sau → quẹt 1–14 trả tháng sau, quẹt 15–cuối tháng trả tháng sau nữa; Ví trả sau MoMo (TPBank) chốt cuối tháng, hạn ngày 10 tháng sau). "
          "«Chi» của 1 tháng = chi tiền mặt/ngân hàng trong tháng + khoản thẻ/ví đến hạn trong tháng = đúng tổng theo danh mục & ngân sách. "
-         "Tiền trả nợ thẻ là trả cho khoản đã tính rồi, KHÔNG cộng thêm vào Chi."]
+         "Tiền trả nợ thẻ là trả cho khoản đã tính rồi, KHÔNG cộng thêm vào Chi.",
+         "QUY TẮC DANH MỤC (3T chốt 22/10): MỌI khoản ăn uống (nhà hàng, quán ăn, cà phê, trà sữa, đồ ăn giao, Pizza/KFC...) "
+         "xếp vào danh mục tien-an-sang-chieu."]
     bals = _balances(cats, all_tx)
     L.append("TIỀN ĐANG CÓ HÔM NAY: " + "; ".join(f"{b['name']} {V(b['balance']) if b['balance'] is not None else 'chưa cấu hình'}" for b in bals)
              + f" → tổng {V(sum(b['balance'] or 0 for b in bals))}.")

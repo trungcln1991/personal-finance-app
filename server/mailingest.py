@@ -38,7 +38,12 @@ MAX_AMOUNT = 200_000_000  # chặn số vô lý (thư giả/lỗi parse)
 RULES = [
     (("VINAMILK", "CON CUNG", "BIBOMART", "KIDS PLAZA", "TA BIM"), "ta-sua-cua-con", "essential"),
     (("PLX", "PETROLIMEX", "XANG", "SHELL", "CALTEX"), "tien-xang-bao-tri-xe", "essential"),
-    (("DOFA", "NHA THUOC", "PHONG KHAM", "LONG CHAU", "PHARMACITY", "BENH VIEN"), "quy-suc-khoe", "essential"),
+    (("DOFA", "NHA THUOC", "PHONG KHAM", "LONG CHAU", "PHARMACITY", "BENH VIEN", " BV "), "quy-suc-khoe", "essential"),
+    # 22/10 3T chốt: mọi khoản ăn uống → tiền ăn sáng chiều. Đứng trước SHOPEE để SHOPEEFOOD không lọt sang đồ dùng.
+    (("PIZZA", "KFC", "LOTTERIA", "JOLLIBEE", "MCDONALD", "BURGER", "TEXAS CHICKEN", "POPEYES", "HIGHLANDS", "PHUC LONG",
+      "STARBUCKS", "KATINAT", "COFFEE", "CAFE", " CA PHE", "TRA SUA", "GONG CHA", "NHA HANG", "QUAN AN", "BANH MI",
+      "BANH TRANG", "COM TAM", "BUN BO", "PHO BO", "PHO GA", " LAU ", "GRABFOOD", "SHOPEEFOOD", "BAEMIN"),
+     "tien-an-sang-chieu", "essential"),
     (("EVN", "DIEN LUC", "NUOC", "VNPT", "FPT TELECOM", "VIETTEL"), "dien-nuoc-internet", "essential"),
     (("BACH HOA XANH", "WINMART", "WIN MART", "CO.OP", "COOPMART", "MM MEGA", "LOTTE MART", "GO!", "SIEU THI"), "tien-cho", "essential"),
     (("SHOPEE", "LAZADA", "TIKI", "TIKTOK SHOP"), "do-dung-gia-dinh", "nice"),
@@ -58,7 +63,7 @@ def _noaccent(s: str) -> str:
 
 
 def classify(text: str):
-    t = _noaccent(text)
+    t = " " + re.sub(r"[^A-Z0-9]+", " ", _noaccent(text)) + " "  # đệm khoảng trắng để từ khoá " BV " khớp nguyên từ
     for keys, cat, pr in RULES:
         if any(k in t for k in keys):
             return cat, pr, True
