@@ -135,7 +135,9 @@ def dkim_ok(msg, kind: str, trusted_authserv) -> bool:
         return False
     for res in v.split(";")[1:]:
         if re.match(r"\s*dkim=pass\b", res):
-            d = re.search(r"header\.d=@?([^\s;]+)", res)
+            # Cloudflare có lúc chỉ ghi header.i=@miền (thư VCB 21/10), không có header.d. Theo RFC 6376 miền của i= luôn
+            # bằng hoặc là con của d= nên dùng i= khi thiếu d= vẫn an toàn (vẫn so khớp chính xác danh sách trắng).
+            d = re.search(r"header\.d=@?([^\s;]+)", res) or re.search(r"header\.i=[^\s;@]*@([^\s;]+)", res)
             if d and d.group(1).rstrip(".") in DKIM_DOMAINS.get(kind, set()):
                 return True
     return False

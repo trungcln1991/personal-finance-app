@@ -118,6 +118,9 @@ class Parse(unittest.TestCase):
         self.assertIsNotNone(P(hsbc("1,000", "Shopee", "18/10/2026", "1,000", extra={"Authentication-Results": ar}), require_dkim=True)[0])
         parent = "mx.cloudflare.net; dkim=pass header.d=hsbc.com.hk"                                          # miền cha hợp lệ
         self.assertIsNotNone(P(hsbc("1,000", "Shopee", "18/10/2026", "1,000", extra={"Authentication-Results": parent}), require_dkim=True)[0])
+        # Cloudflare chỉ ghi header.i (dạng thật của thư VCB 21/10)
+        only_i = "mx.cloudflare.net; dkim=pass header.i=@notification.hsbc.com.hk header.s=selector02 header.b=XHUv+zB7; dmarc=pass"
+        self.assertIsNotNone(P(hsbc("1,000", "Shopee", "18/10/2026", "1,000", extra={"Authentication-Results": only_i}), require_dkim=True)[0])
 
     def test_dkim_rejects_spoofs(self):
         def chk(h):
@@ -126,6 +129,11 @@ class Parse(unittest.TestCase):
         self.assertIsNone(chk({"Authentication-Results": "mx.cloudflare.net; dkim=pass header.d=evil.notification.hsbc.com.hk"}))
         self.assertIsNone(chk({"Authentication-Results": "mx.cloudflare.net; dkim=pass header.d=notification.hsbc.com.hk.evil.example"}))
         self.assertIsNone(chk({"Authentication-Results": "mx.cloudflare.net; dkim=fail header.d=notification.hsbc.com.hk"}))
+        # header.i giả: miền khác, hậu tố giả, d= sai thì không được lấy i= cứu
+        self.assertIsNone(chk({"Authentication-Results": "mx.cloudflare.net; dkim=pass header.i=@evil.example"}))
+        self.assertIsNone(chk({"Authentication-Results": "mx.cloudflare.net; dkim=pass header.i=@notification.hsbc.com.hk.evil.example"}))
+        self.assertIsNone(chk({"Authentication-Results": "mx.cloudflare.net; dkim=pass header.d=evil.example header.i=@notification.hsbc.com.hk"}))
+        self.assertIsNone(chk({"Authentication-Results": "mx.cloudflare.net; dkim=fail header.i=@notification.hsbc.com.hk"}))
         # authserv-id không tin cậy (kẻ gửi tự đặt)
         self.assertIsNone(chk({"Authentication-Results": "evil.example; dkim=pass header.d=notification.hsbc.com.hk"}))
         # ARC / X-Original không được tin
