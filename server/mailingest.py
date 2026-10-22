@@ -227,7 +227,8 @@ def parse_vcb(text: str, own_account: str):
     amount, d = _num(amt.group(1)), _dmy(when.group(1))
     fee = re.search(r"Số tiền phí\s+Transaction Fee\s*\|?\s*([\d.,]+)\s*VND", flat)
     fee_v = _num(fee.group(1)) if fee else 0
-    ben = re.search(r"Beneficiary Name\s*\|?\s*(.+?)\s*\|", flat)
+    # phần text/plain (Gmail chuyển tiếp) không có "|" giữa các ô → dừng ở nhãn kế tiếp
+    ben = re.search(r"Beneficiary Name\s*\|?\s*(.+?)\s*(?:\||Mã hóa đơn|Ngân hàng hưởng|Số tiền|Nội dung|Loại phí|$)", flat)
     title = re.search(r"(Giao dịch thanh toán .+?|Biên lai chuyển tiền qua tài khoản)\s*\(Payment Receipt\)", flat)
     who = re.sub(r"^(HO KINH DOANH|CONG TY TNHH|CONG TY CP)\s+", "", ben.group(1).strip()) if ben else (
         title.group(1).replace("Giao dịch thanh toán", "").strip() if title else "")
@@ -320,7 +321,7 @@ def parse_mail(raw: bytes, own_vcb: str = "", hsbc_card: str = "", require_dkim:
         if require_dkim and not dkim_ok(msg, kind, trusted_authserv):
             return None, f"không có dkim=pass (từ máy nhận tin cậy) cho miền người gửi [AR: {auth_summary(msg)}]"
         kinds, how = [kind], kind
-    entry, skip = None, None
+    entry, skip, fallback = None, None, None
     for text in message_texts(msg):
         for k in kinds:
             try:
@@ -330,8 +331,12 @@ def parse_mail(raw: bytes, own_vcb: str = "", hsbc_card: str = "", require_dkim:
                 continue
             if entry:
                 break
+        if entry and not entry["known"]:  # phần text này đọc thiếu tên nơi chi → thử phần còn lại (html) trước khi chịu "[?]"
+            fallback, entry = fallback or entry, None
+            continue
         if entry:
             break
+    entry = entry or fallback
     if not entry:
         return None, skip or f"thư {how} không khớp mẫu giao dịch chi (bỏ qua, không đoán)"
     if not (0 < entry["amount"] <= MAX_AMOUNT):

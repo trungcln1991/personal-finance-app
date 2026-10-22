@@ -327,6 +327,24 @@ class NewApply(Apply):
         self.assertEqual((seen["hsbc_balance"], seen["hsbc_date"]), (27550677, "2026-10-18"))
 
 
+class VcbPlainNoPipes(Parse):
+    """22/10: biên lai VCB thật có phần text/plain không có "|" giữa các ô → tên người hưởng đọc ra rỗng, ghi "[?]  (VCB)"."""
+    ROWS = [("Ngày, giờ giao dịch Trans. Date, Time", "18:19 Thứ Tư 21/10/2026"), ("Số lệnh giao dịch Order Number", "16651871275"),
+            ("Tài khoản nguồn Debit Account", OWN), ("Tài khoản hưởng Credit Account", "0451000380723"),
+            ("Tên người hưởng Beneficiary Name", "BV NHI DONG TP"), ("Mã hóa đơn/Mã khách hàng Bill code/Customer code", "BIDV11akf"),
+            ("Số tiền Amount", "350,000 VND")]
+
+    def test_plain_only(self):
+        plain = "Biên lai thanh toán (Payment Receipt)\n" + "\n".join(f"{a}\n{b}" for a, b in self.ROWS)
+        e, _ = P(mail("VCBDigibank@info.vietcombank.com.vn", "Biên lai thanh toán", plain))
+        self.assertEqual((e["amount"], e["category"], e["note"]), (350000, "quy-suc-khoe", "BV NHI DONG TP (VCB)"))
+
+    def test_plain_and_html(self):
+        html = "<table>" + "".join(f"<tr><td>{a}</td><td>{b}</td></tr>" for a, b in self.ROWS) + "</table>"
+        e, _ = P(mail("VCBDigibank@info.vietcombank.com.vn", "Biên lai thanh toán", "giữ chỗ Order Number 1", html=html))
+        self.assertEqual(e["note"], "BV NHI DONG TP (VCB)")
+
+
 class Classify(unittest.TestCase):
     def test_food_and_hospital(self):
         self.assertEqual(mi.classify("NH PIZZA HUT-CN LONG AN")[0], "tien-an-sang-chieu")
