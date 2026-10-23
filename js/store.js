@@ -302,27 +302,32 @@ export function computeDebtStatus(categories, allTx, todayStr) {
     .filter((p) => !paymentType(p.type).tracksBalance)
     .map((p) => {
       if (!p.openingDebtDate) {
-        return { ...p, configured: false, totalDebt: 0, dueAmount: 0, currentMonthSpend: 0, paidAmount: 0, canPay: false, dueDate: null, isOverdue: false };
+        return { ...p, configured: false, totalDebt: 0, dueAmount: 0, currentMonthSpend: 0, paidAmount: 0, refundAmount: 0, canPay: false, dueDate: null, isOverdue: false };
       }
       const cycle = p.statementDay && p.dueDay ? getStatementCycle(p, todayStr) : null;
       let spendBefore = 0;
       let currentMonthSpend = 0;
       let paidAmount = 0;
+      let refundAmount = 0;
       for (const t of allTx) {
         if (t.date < p.openingDebtDate) continue;
-        if (t.type === 'expense' && t.paymentMethod === p.id) {
+        // Chi bằng thẻ, và rút tiền mặt từ thẻ (cũng là nợ) — cùng cách debtSchedule tính
+        const isCharge = (t.type === 'expense' && t.paymentMethod === p.id) || (t.type === 'transfer' && t.fromPayment === p.id);
+        if (isCharge) {
           const isBilled = cycle ? t.date <= cycle.lastCloseDate : t.date.slice(0, 7) !== todayMonthKey;
           if (isBilled) spendBefore += t.amount;
           else currentMonthSpend += t.amount;
         } else if (t.type === 'transfer' && t.toPayment === p.id) {
           paidAmount += t.amount;
+        } else if (t.type === 'income' && t.paymentMethod === p.id) {
+          refundAmount += t.amount;   // hoàn tiền/cashback về thẻ: giảm nợ như một khoản đã trả (23/10/2026)
         }
       }
-      const totalDebt = p.openingDebt + spendBefore + currentMonthSpend - paidAmount;
-      const dueAmount = Math.max(0, p.openingDebt + spendBefore - paidAmount);
+      const totalDebt = p.openingDebt + spendBefore + currentMonthSpend - paidAmount - refundAmount;
+      const dueAmount = Math.max(0, p.openingDebt + spendBefore - paidAmount - refundAmount);
       const dueDate = cycle ? cycle.dueDate : null;
       const isOverdue = !!(dueDate && dueAmount > 0 && todayStr > dueDate);
-      return { ...p, configured: true, totalDebt, dueAmount, currentMonthSpend, paidAmount, canPay: totalDebt > 0, dueDate, isOverdue };
+      return { ...p, configured: true, totalDebt, dueAmount, currentMonthSpend, paidAmount, refundAmount, canPay: totalDebt > 0, dueDate, isOverdue };
     });
 }
 
