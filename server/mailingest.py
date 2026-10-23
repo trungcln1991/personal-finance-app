@@ -228,7 +228,9 @@ def parse_vcb(text: str, own_account: str):
     fee = re.search(r"Số tiền phí\s+Transaction Fee\s*\|?\s*([\d.,]+)\s*VND", flat)
     fee_v = _num(fee.group(1)) if fee else 0
     # phần text/plain (Gmail chuyển tiếp) không có "|" giữa các ô → dừng ở nhãn kế tiếp
-    ben = re.search(r"Beneficiary Name\s*\|?\s*(.+?)\s*(?:\||Mã hóa đơn|Ngân hàng hưởng|Số tiền|Nội dung|Loại phí|$)", flat)
+    # 23/10: biên lai chuyển tiền có thêm ô "Tên ngân hàng hưởng Beneficiary Bank Name" ngay sau tên người hưởng
+    ben = re.search(r"Beneficiary Name\s*\|?\s*(.+?)\s*(?:\||Mã hóa đơn|[Tt]ên ngân hàng hưởng|Ngân hàng hưởng|Beneficiary Bank|"
+                    r"Số tiền|Nội dung|Loại phí|$)", flat)
     title = re.search(r"(Giao dịch thanh toán .+?|Biên lai chuyển tiền qua tài khoản)\s*\(Payment Receipt\)", flat)
     who = re.sub(r"^(HO KINH DOANH|CONG TY TNHH|CONG TY CP)\s+", "", ben.group(1).strip()) if ben else (
         title.group(1).replace("Giao dịch thanh toán", "").strip() if title else "")

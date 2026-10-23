@@ -344,6 +344,17 @@ class VcbPlainNoPipes(Parse):
         e, _ = P(mail("VCBDigibank@info.vietcombank.com.vn", "Biên lai thanh toán", "giữ chỗ Order Number 1", html=html))
         self.assertEqual(e["note"], "BV NHI DONG TP (VCB)")
 
+    def test_transfer_plain_bank_name_row(self):
+        """23/10: thư chuyển tiền thật 22/10 ghi note "[?] VO HOANG NHUT Tên ngân hàng hưởng Beneficiary Bank Name Ngân hàng TMCP…"."""
+        rows = [("Ngày, giờ giao dịch Trans. Date, Time", "18:16 Thứ Năm 22/10/2026"), ("Số lệnh giao dịch Order Number", "16667161279"),
+                ("Tài khoản nguồn Debit Account", OWN), ("Tên người chuyển tiền Remitter’s name", "NGUOI NHAN TEST"),
+                ("Tài khoản người hưởng Credit Account", "1490792123460"), ("Tên người hưởng Beneficiary Name", "VO HOANG NHUT"),
+                ("Tên ngân hàng hưởng Beneficiary Bank Name", "Ngân hàng TMCP Thịnh vượng và Phát triển (PGBANK)"),
+                ("Số tiền Amount", "334,000 VND"), ("Nội dung chuyển tiền Details of Payment", "NGUOI NHAN TEST chuyen tien")]
+        plain = "Biên lai chuyển tiền qua tài khoản (Payment Receipt)\n" + "\n".join(f"{a}\n{b}" for a, b in rows)
+        e, _ = P(mail("VCBDigibank@info.vietcombank.com.vn", "Biên lai chuyển tiền qua tài khoản", plain))
+        self.assertEqual((e["amount"], e["date"], e["note"]), (334000, "2026-10-22", "[?] VO HOANG NHUT (VCB)"))
+
 
 class Classify(unittest.TestCase):
     def test_food_and_hospital(self):
