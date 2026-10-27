@@ -33,6 +33,7 @@ SENDER_DOMAINS = {"notification.hsbc.com.hk": "hsbc", "info.vietcombank.com.vn":
 DKIM_DOMAINS = {"hsbc": {"notification.hsbc.com.hk", "hsbc.com.hk"}, "vcb": {"info.vietcombank.com.vn", "vietcombank.com.vn"},
                 "momo": {"momo.vn"}, "apple": {"email.apple.com", "apple.com"}, "owner": {"gmail.com"}}
 MAX_AMOUNT = 200_000_000  # chặn số vô lý (thư giả/lỗi parse)
+USD_RATE_MIN, USD_RATE_MAX = 20_000, 35_000  # VND/USD ngầm định cho khoản ngoại tệ (chênh dư nợ / USD) — ngoài khoảng này là nghi sót
 
 # ── quy tắc phân loại: (từ khoá KHÔNG DẤU viết hoa, category, priority) — khớp đầu tiên thắng ──
 RULES = [
@@ -175,7 +176,7 @@ def parse_hsbc(text: str, card_suffix: str):
         m = re.search(r"your card X(\d{4}) has been charged VND([\d.,]+) at merchant (.+?) on (\d{2}/\d{2}/\d{4})\.\s*"
                       r"Your current balance is VND([\d.,]+)", t)
         if not m:
-            return None
+            return _parse_hsbc_usd(t, card_suffix)
     card, amount, merchant, d, balance = m.group(1), _num(m.group(2)), m.group(3).strip(), _dmy(m.group(4)), _num(m.group(5))
     if card_suffix and card != card_suffix:
         return None
@@ -183,6 +184,26 @@ def parse_hsbc(text: str, card_suffix: str):
     note = merchant.replace("_", " ").strip()
     return {"kind": "hsbc", "key": f"hsbc:{d}:{amount}:{balance}", "date": d, "amount": amount, "pm": "the-tin-dung",
             "category": cat, "priority": pr, "known": known, "note": f"{note} (HSBC)" if known else f"[?] {note} (HSBC)",
+            "balance": balance}
+
+
+def _parse_hsbc_usd(t: str, card_suffix: str):
+    """Thẻ HSBC quẹt ngoại tệ (vd ANTHROPIC* CLAUDE TEAM 16.92 USD 26/10): thư chỉ ghi USD, không ghi VND. Số VND thật = chênh
+    lệch dư nợ so với thư trước (apply_entry tính, có kiểm tỉ giá hợp lý) nên entry này mang amount=0 + usd."""
+    m = re.search(r"thẻ tín dụng X(\d{4}) của Quý khách vừa thực hiện giao dịch với số tiền ([\d.,]+) USD tại (.+?) vào ngày "
+                  r"(\d{2}/\d{2}/\d{4})\.\s*Dư nợ hiện tại là ([\d.,]+) VND", t)
+    if not m:
+        m = re.search(r"your card X(\d{4}) has been charged USD([\d.,]+) at merchant (.+?) on (\d{2}/\d{2}/\d{4})\.\s*"
+                      r"Your current balance is VND([\d.,]+)", t)
+    if not m:
+        return None
+    card, usd, merchant, d, balance = m.group(1), m.group(2).replace(",", ""), m.group(3).strip(), _dmy(m.group(4)), _num(m.group(5))
+    if card_suffix and card != card_suffix:
+        return None
+    cat, pr, known = classify(merchant)
+    note = merchant.replace("_", " ").strip()
+    return {"kind": "hsbc", "key": f"hsbc:{d}:USD{usd}:{balance}", "date": d, "amount": 0, "usd": float(usd), "pm": "the-tin-dung",
+            "category": cat, "priority": pr, "known": known, "note": f"{note} (HSBC, {usd} USD)" if known else f"[?] {note} (HSBC, {usd} USD)",
             "balance": balance}
 
 
@@ -341,7 +362,7 @@ def parse_mail(raw: bytes, own_vcb: str = "", hsbc_card: str = "", require_dkim:
     entry = entry or fallback
     if not entry:
         return None, skip or f"thư {how} không khớp mẫu giao dịch chi (bỏ qua, không đoán)"
-    if not (0 < entry["amount"] <= MAX_AMOUNT):
+    if not entry.get("usd") and not (0 < entry["amount"] <= MAX_AMOUNT):  # khoản USD: amount tính sau ở apply_entry
         return None, f"số tiền ngoài ngưỡng ({entry['amount']})"
     entry["via"] = how
     return entry, "ok"
@@ -382,7 +403,19 @@ def apply_entry(entry: dict, repo: Path, seen_path: Path, commit) -> dict:
     path = repo / rel
     data = json.loads(path.read_text(encoding="utf-8")) if path.is_file() else []
     warn = None
-    if entry["kind"] == "hsbc" and entry["date"] >= (seen.get("hsbc_date") or ""):  # chỉ thư mới hơn mốc đã biết
+    if entry.get("usd"):  # VND thật = dư nợ mới − dư nợ lần trước; chỉ tin khi tỉ giá ngầm trong khoảng hợp lý
+        last = seen.get("hsbc_balance")
+        if last is None or entry["date"] < (seen.get("hsbc_date") or ""):
+            return {"status": "ignored", "reason": f"khoản USD {entry['usd']}: chưa có mốc dư nợ để suy ra VND"}
+        vnd = entry["balance"] - last
+        if not (entry["usd"] * USD_RATE_MIN <= vnd <= entry["usd"] * USD_RATE_MAX):
+            return {"status": "ignored", "reason": f"khoản USD {entry['usd']}: chênh dư nợ {vnd} VND không khớp tỉ giá hợp lý "
+                                                   f"(có thể sót khoản khác) — nhập tay"}
+        entry = {**entry, "amount": vnd}
+        seen["hsbc_balance"], seen["hsbc_date"] = entry["balance"], entry["date"]
+        if not (0 < vnd <= MAX_AMOUNT):
+            return {"status": "ignored", "reason": f"số tiền ngoài ngưỡng ({vnd})"}
+    elif entry["kind"] == "hsbc" and entry["date"] >= (seen.get("hsbc_date") or ""):  # chỉ thư mới hơn mốc đã biết
         last = seen.get("hsbc_balance")
         if last is not None and last + entry["amount"] != entry["balance"]:
             diff = entry["balance"] - last - entry["amount"]

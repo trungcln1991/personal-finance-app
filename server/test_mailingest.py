@@ -31,6 +31,14 @@ def hsbc(amount, merchant, d, bal, vi=True, card=CARD, extra=None):
     return mail("HSBC@notification.hsbc.com.hk", "[TB/Alert] Giao dich", (vn + " ------ " + en) if vi else en, extra=extra)
 
 
+def hsbc_usd(usd, merchant, d, bal, vi=True, card=CARD):
+    vn = (f"Kính gởi Quý khách, Chúng tôi xin thông báo thẻ tín dụng X{card} của Quý khách vừa thực hiện giao dịch với số tiền {usd} USD "
+          f"tại {merchant} vào ngày {d}. Dư nợ hiện tại là {bal} VND và số dư khả dụng là 69,351,763 VND Nếu Quý khách cần thêm...")
+    en = (f"Dear Customer, We would like to inform you that your card X{card} has been charged USD{usd} at merchant {merchant} on {d}. "
+          f"Your current balance is VND{bal} & available limit is VND69,351,763 If you have any query")
+    return mail("HSBC@notification.hsbc.com.hk", "[TB/Alert] Giao dich", (vn + " ------ " + en) if vi else en)
+
+
 def vcb_transfer(order, amount, ben, d="18/10/2026", acct=OWN):
     rows = [("Ngày, giờ giao dịch Trans. Date, Time", f"18:25 Chủ Nhật {d}"), ("Số lệnh giao dịch Order Number", order),
             ("Tài khoản nguồn Debit Account", acct), ("Tên người chuyển tiền Remitter’s name", "NGUOI NHAN TEST"),
@@ -325,6 +333,44 @@ class NewApply(Apply):
         self.assertIsNone(r["warn"])
         seen = json.loads(self.seen.read_text())
         self.assertEqual((seen["hsbc_balance"], seen["hsbc_date"]), (27550677, "2026-10-18"))
+
+
+class HsbcUsd(Apply):
+    """Thẻ HSBC quẹt USD (thư thật 26/10: ANTHROPIC* CLAUDE TEAM 16.92 + 16.90 USD): VND = chênh lệch dư nợ."""
+    def test_parse_usd_both_languages(self):
+        for vi in (True, False):
+            e, why = P(hsbc_usd("16.92", "ANTHROPIC* CLAUDE TEAM", "26/10/2026", "30,248,236", vi=vi))
+            self.assertIsNotNone(e, why)
+            self.assertEqual((e["usd"], e["amount"], e["balance"], e["date"]), (16.92, 0, 30248236, "2026-10-26"))
+
+    def test_usd_amount_from_balance_chain(self):
+        self.run_mail(hsbc("100,000", "Shopee", "21/10/2026", "29,795,283"))
+        r1 = self.run_mail(hsbc_usd("16.92", "ANTHROPIC* CLAUDE TEAM", "26/10/2026", "30,248,236"))
+        r2 = self.run_mail(hsbc_usd("16.90", "ANTHROPIC* CLAUDE TEAM", "26/10/2026", "30,700,653"))
+        self.assertEqual((r1["status"], r1["amount"], r2["status"], r2["amount"]), ("added", 452953, "added", 452417))
+        self.assertIsNone(r1["warn"]); self.assertIsNone(r2["warn"])
+        notes = [t["note"] for t in self.month()]
+        self.assertIn("(HSBC, 16.92 USD)", " ".join(notes))
+        self.assertEqual(json.loads(self.seen.read_text())["hsbc_balance"], 30700653)
+
+    def test_usd_duplicate_mail_not_double(self):
+        self.run_mail(hsbc("100,000", "Shopee", "21/10/2026", "29,795,283"))
+        self.run_mail(hsbc_usd("16.92", "ANTHROPIC* CLAUDE TEAM", "26/10/2026", "30,248,236"))
+        self.assertEqual(self.run_mail(hsbc_usd("16.92", "ANTHROPIC* CLAUDE TEAM", "26/10/2026", "30,248,236"))["status"], "duplicate-mail")
+        self.assertEqual(len(self.month()), 2)
+
+    def test_usd_without_balance_anchor_ignored(self):
+        r = self.run_mail(hsbc_usd("16.92", "ANTHROPIC* CLAUDE TEAM", "26/10/2026", "30,248,236"))
+        self.assertEqual(r["status"], "ignored"); self.assertFalse((self.repo / "transactions/2026-10.json").exists())
+
+    def test_usd_implausible_rate_ignored_and_balance_untouched(self):
+        self.run_mail(hsbc("100,000", "Shopee", "21/10/2026", "29,795,283"))
+        r = self.run_mail(hsbc_usd("16.92", "ANTHROPIC* CLAUDE TEAM", "26/10/2026", "31,500,000"))  # chênh 1,7tr = sót khoản khác
+        self.assertEqual(r["status"], "ignored")
+        self.assertEqual(json.loads(self.seen.read_text())["hsbc_balance"], 29795283)
+
+    def test_usd_wrong_card_rejected(self):
+        self.assertIsNone(P(hsbc_usd("16.92", "X", "26/10/2026", "1,000", card="1111"))[0])
 
 
 class VcbPlainNoPipes(Parse):
