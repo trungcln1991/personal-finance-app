@@ -607,7 +607,7 @@ async def ingest(request: Request):
         return {"status": "ignored", "reason": why}
     with _lock:
         res = mailingest.apply_entry(entry, REPO, INGEST_STATE, _ingest_commit)
-    _ingest_log({k: v for k, v in res.items() if k != "key"} | {"kind": entry["kind"], "via": entry.get("via"), "amount": entry["amount"]})
+    _ingest_log({k: v for k, v in res.items() if k != "key"} | {"kind": entry["kind"], "via": entry.get("via"), "amount": res.get("amount", entry["amount"])})  # khoản USD: số VND do apply_entry suy ra
     if res["status"] == "added":
         flag = "" if res.get("known") else " [CAN PHAN LOAI]"
         _ingest_notify(f"Da ghi: {res['note']} - {res['amount']:,}d{flag}".replace(",", ".") + (f"\nCanh bao: {res['warn']}" if res.get("warn") else ""))
