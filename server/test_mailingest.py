@@ -57,9 +57,24 @@ def vcb_vietlott(order="16537062429", amount="100,000", fee="3,000", d="14/10/20
                 html=f"<table><tr><td>Giao dịch thanh toán VietlottSMS (Payment Receipt)</td></tr>{t}</table>")
 
 
+def vcb_card_payment(order="16784780146", amount="21,591,906", ben="LE TRAN ANH PHUC", bank="Ngân hàng TNHH MTV HSBC Việt Nam",
+                     cred="437841...9416", details="CAO LE NAM TRUNG chuyen tien Thanh toan hsbc", d="30/10/2026"):
+    """Biên lai thật 30/10: chuyển từ VCB vào thẻ HSBC (trả thẻ) — có ô thẻ hưởng, ngân hàng hưởng, nội dung."""
+    rows = [("Ngày, giờ giao dịch Trans. Date, Time", f"13:12 Thứ Sáu {d}"), ("Số lệnh giao dịch Order Number", order),
+            ("Tài khoản nguồn Debit Account", OWN), ("Tên người chuyển tiền Remitter’s name", "CAO LE NAM TRUNG"),
+            ("Tài khoản/ Thẻ người hưởng Credit Account/ Card", cred), ("Tên người hưởng Beneficiary Name", ben),
+            ("Tên ngân hàng hưởng Beneficiary Bank Name", bank), ("Số tiền Amount", f"{amount} VND"),
+            ("Loại phí Charge Code | Người chuyển trả Exclude | Số tiền phí Charge Amount Net income VAT", "0 VND 0 VND 0 VND"),
+            ("Nội dung chuyển tiền Details of Payment", details)]
+    t = "".join(f"<tr><td>{a}</td><td>{b}</td></tr>" for a, b in rows)
+    return mail("VCBDigibank@info.vietcombank.com.vn", "Biên lai chuyển tiền qua tài khoản/ thẻ",
+                html=f"<table><tr><td>Biên lai chuyển tiền qua tài khoản/ thẻ (Payment Receipt)</td></tr>{t}</table>")
+
+
 def P(raw, **kw):
     kw.setdefault("require_dkim", False)
-    return mi.parse_mail(raw, own_vcb=OWN, hsbc_card=CARD, **kw)
+    kw.setdefault("hsbc_card", CARD)
+    return mi.parse_mail(raw, own_vcb=OWN, **kw)
 
 
 class Parse(unittest.TestCase):
@@ -99,6 +114,22 @@ class Parse(unittest.TestCase):
         e, _ = P(vcb_vietlott())
         self.assertEqual((e["amount"], e["category"], e["priority"]), (103000, "chi-ca-nhan", "unnecessary"))
         self.assertIn("100.000 + phí 3.000", e["note"])
+
+    def test_vcb_hsbc_card_payment_is_transfer(self):
+        """30/10: trả thẻ HSBC bằng chuyển khoản VCB phải là transfer ngan-hang → the-tin-dung, KHÔNG phải chi cá nhân."""
+        e, why = P(vcb_card_payment(), hsbc_card="9416"); self.assertIsNotNone(e, why)
+        self.assertEqual((e["type"], e["pm"], e["to"], e["amount"], e["known"]), ("transfer", "ngan-hang", "the-tin-dung", 21591906, True))
+        self.assertEqual(e["date"], "2026-10-30")
+        # không biết 4 số cuối thẻ (env trống / khác): vẫn nhận ra nhờ ngân hàng hưởng HSBC + nội dung "hsbc"
+        e, _ = P(vcb_card_payment()); self.assertEqual(e["type"], "transfer")
+
+    def test_vcb_hsbc_card_payment_by_card_suffix_only(self):
+        e, _ = P(vcb_card_payment(bank="Ngân hàng X", details="tra the"), hsbc_card="9416"); self.assertEqual(e["type"], "transfer")
+
+    def test_vcb_to_person_at_hsbc_without_hint_is_not_card_payment(self):
+        """chuyển cho người khác có TK HSBC, nội dung không nhắc hsbc, thẻ không khớp → vẫn là chi tiêu bình thường"""
+        e, _ = P(vcb_card_payment(cred="9876543210", details="tra tien an"), hsbc_card="9416")
+        self.assertIsNone(e.get("type")); self.assertEqual(e["category"], "chi-ca-nhan")
 
     def test_vcb_other_account_rejected(self):
         self.assertIsNone(P(vcb_transfer("1", "1,000", "A", acct="9999999999"))[0])
@@ -196,6 +227,24 @@ class Apply(unittest.TestCase):
         self.run_mail(vcb_transfer("111111", "30,000", "A B", d="19/10/2026"))
         r = self.run_mail(vcb_transfer("222222", "30,000", "A B", d="19/10/2026"))
         self.assertEqual(r["status"], "added"); self.assertEqual(len(self.month()), 2)
+
+    def test_card_payment_written_as_transfer(self):
+        r = self.run_mail(vcb_card_payment())
+        self.assertEqual((r["status"], r["amount"]), ("added", 21591906))
+        t = self.month()[0]
+        self.assertEqual((t["type"], t["fromPayment"], t["toPayment"], t["amount"]), ("transfer", "ngan-hang", "the-tin-dung", 21591906))
+        self.assertNotIn("category", t); self.assertNotIn("paymentMethod", t)
+
+    def test_card_payment_not_matched_to_expense_but_to_manual_transfer(self):
+        (self.repo / "transactions/2026-10.json").write_text(json.dumps([
+            {"id": "tx-exp", "date": "2026-10-30", "type": "expense", "category": "chi-ca-nhan", "amount": 21591906, "note": "x",
+             "paymentMethod": "ngan-hang", "priority": "nice"}]), encoding="utf-8")
+        self.assertEqual(self.run_mail(vcb_card_payment())["status"], "added")  # khoản chi trùng số tiền không được "nhận" làm trả thẻ
+        (self.repo / "transactions/2026-10.json").write_text(json.dumps([
+            {"id": "tx-tr", "date": "2026-10-30", "type": "transfer", "fromPayment": "ngan-hang", "toPayment": "the-tin-dung",
+             "amount": 21591906, "note": "tra the"}]), encoding="utf-8")
+        r = self.run_mail(vcb_card_payment(order="16784780999"))
+        self.assertEqual((r["status"], r["id"]), ("matched-existing", "tx-tr"))
 
     def test_hsbc_balance_gap_warning(self):
         self.run_mail(hsbc("254,124", "CH3029 CH VINAMILK 395", "18/10/2026", "26,868,577"))

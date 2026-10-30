@@ -233,7 +233,18 @@ def parse_vcb_card(flat: str, own_account: str):
             "note": f"{merchant} (thẻ VCB)" if known else f"[?] {merchant} (thẻ VCB)"}
 
 
-def parse_vcb(text: str, own_account: str):
+def _is_hsbc_card_payment(flat: str, hsbc_card: str) -> bool:
+    """Biên lai VCB chuyển tiền vào thẻ HSBC của nhà: 4 số cuối thẻ hưởng khớp INGEST_HSBC_CARD,
+    hoặc ngân hàng hưởng là HSBC VÀ nội dung có chữ "hsbc" (tránh nhầm chuyển cho người khác có TK HSBC)."""
+    cred = re.search(r"Credit Account/ ?Card\s*\|?\s*([\d.…*xX]+)", flat)
+    if hsbc_card and cred and re.sub(r"\D", "", cred.group(1))[-len(hsbc_card):] == hsbc_card:
+        return True
+    bank = re.search(r"Beneficiary Bank Name\s*\|?\s*(.+?)\s*(?:\||Số tiền|Amount|Loại phí|$)", flat)
+    det = re.search(r"Details of Payment\s*\|?\s*(.+?)\s*(?:\||$)", flat)
+    return bool(bank and det and "HSBC" in _noaccent(bank.group(1)) and "HSBC" in _noaccent(det.group(1)))
+
+
+def parse_vcb(text: str, own_account: str, hsbc_card: str = ""):
     flat = re.sub(r"\s+", " ", re.sub(r"[ \t]+", " ", text))
     if "card transaction notification" in flat:
         return parse_vcb_card(flat, own_account)
@@ -248,6 +259,9 @@ def parse_vcb(text: str, own_account: str):
     amount, d = _num(amt.group(1)), _dmy(when.group(1))
     fee = re.search(r"Số tiền phí\s+Transaction Fee\s*\|?\s*([\d.,]+)\s*VND", flat)
     fee_v = _num(fee.group(1)) if fee else 0
+    if _is_hsbc_card_payment(flat, hsbc_card):  # 30/10: chuyển tiền trả thẻ HSBC là TRẢ NỢ THẺ (transfer), không phải chi tiêu
+        return {"kind": "vcb", "key": f"vcb:{order.group(1)}", "date": d, "amount": amount, "pm": "ngan-hang", "type": "transfer",
+                "to": "the-tin-dung", "category": None, "priority": None, "known": True, "note": "Trả thẻ HSBC (VCB)"}
     # phần text/plain (Gmail chuyển tiếp) không có "|" giữa các ô → dừng ở nhãn kế tiếp
     # 23/10: biên lai chuyển tiền có thêm ô "Tên ngân hàng hưởng Beneficiary Bank Name" ngay sau tên người hưởng
     ben = re.search(r"Beneficiary Name\s*\|?\s*(.+?)\s*(?:\||Mã hóa đơn|[Tt]ên ngân hàng hưởng|Ngân hàng hưởng|Beneficiary Bank|"
@@ -318,7 +332,7 @@ def _parse_by_kind(kind: str, text: str, own_vcb: str, hsbc_card: str):
     if kind == "hsbc":
         return parse_hsbc(text, hsbc_card)
     if kind == "vcb":
-        return parse_vcb(text, own_vcb)
+        return parse_vcb(text, own_vcb, hsbc_card)
     if kind == "momo":
         return parse_momo(text)
     if kind == "apple":
@@ -423,8 +437,11 @@ def apply_entry(entry: dict, repo: Path, seen_path: Path, commit) -> dict:
         seen["hsbc_balance"], seen["hsbc_date"] = entry["balance"], entry["date"]
     # khoản y hệt đã có: cùng số tiền + phương thức, lệch ≤ 1 ngày, nguồn này chưa "nhận" khoản đó
     d0 = date.fromisoformat(entry["date"])
-    cand = [t for t in data if t.get("type") == "expense" and t["amount"] == entry["amount"]
-            and t.get("paymentMethod") == entry["pm"] and entry["kind"] not in seen["claims"].get(t["id"], [])
+    is_tr = entry.get("type") == "transfer"  # trả thẻ: chỉ khớp với transfer cùng chiều đã có (nhập tay), không khớp khoản chi
+    cand = [t for t in data if t["amount"] == entry["amount"]
+            and ((t.get("type") == "transfer" and t.get("fromPayment") == entry["pm"] and t.get("toPayment") == entry["to"]) if is_tr
+                 else (t.get("type") == "expense" and t.get("paymentMethod") == entry["pm"]))
+            and entry["kind"] not in seen["claims"].get(t["id"], [])
             and abs((date.fromisoformat(t["date"]) - d0).days) <= 1]
     if cand:
         t = sorted(cand, key=lambda x: (abs((date.fromisoformat(x["date"]) - d0).days), x["date"]))[0]
@@ -432,8 +449,12 @@ def apply_entry(entry: dict, repo: Path, seen_path: Path, commit) -> dict:
         seen["keys"][entry["key"]] = t["id"]
         seen_path.write_text(json.dumps(seen, ensure_ascii=False))
         return {"status": "matched-existing", "id": t["id"], "note": t["note"], "kind": entry["kind"], "warn": warn}
-    tx = {"id": _new_id(), "date": entry["date"], "type": "expense", "category": entry["category"],
-          "amount": entry["amount"], "note": entry["note"], "paymentMethod": entry["pm"], "priority": entry["priority"]}
+    if is_tr:  # cùng dạng với form "Chuyển khoản" của app (js/add.js)
+        tx = {"id": _new_id(), "date": entry["date"], "type": "transfer", "fromPayment": entry["pm"], "toPayment": entry["to"],
+              "amount": entry["amount"], "note": entry["note"]}
+    else:
+        tx = {"id": _new_id(), "date": entry["date"], "type": "expense", "category": entry["category"],
+              "amount": entry["amount"], "note": entry["note"], "paymentMethod": entry["pm"], "priority": entry["priority"]}
     data.append(tx)
     data.sort(key=lambda t: t["date"])
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -444,5 +465,5 @@ def apply_entry(entry: dict, repo: Path, seen_path: Path, commit) -> dict:
     seen["claims"].setdefault(tx["id"], []).append(entry["kind"])
     seen["keys"][entry["key"]] = tx["id"]
     seen_path.write_text(json.dumps(seen, ensure_ascii=False))
-    return {"status": "added", "id": tx["id"], "note": tx["note"], "category": tx["category"],
+    return {"status": "added", "id": tx["id"], "note": tx["note"], "category": tx.get("category"),
             "amount": tx["amount"], "known": entry["known"], "warn": warn}
